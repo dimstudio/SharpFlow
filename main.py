@@ -1,253 +1,171 @@
-# system imports
-import zipfile, os, json, re, datetime, time
-
-# ML imports
+import json
+import os
+import re
+import select
+import socket
+import threading
+from datetime import datetime
+from datetime import timedelta
 import numpy as np
-# import seaborn as sns
 import pandas as pd
-# import matplotlib.pyplot as plt
 from pandas.io.json import json_normalize
-
+from sklearn import preprocessing
 import tensorflow as tf
 from tensorflow import keras
+import matplotlib.pyplot as plt
+from pylab import text
 
-from sklearn import preprocessing
-from sklearn.model_selection import train_test_split
-# from sklearn.metrics import accuracy_score
-from sklearn.metrics import roc_auc_score
-# from sklearn import metrics
+# tcp-server setting
+bind_ip = '127.0.0.1'
+port_list = [20001] # could work with 2 ports
+start_script = datetime.now()
+servers = []
+request_count = 0
+complete_compression = 0
 
-import logging
-logging.getLogger('tensorflow').disabled = True
+# general dataframes
+df_kinect = pd.DataFrame()
+df_myo = pd.DataFrame()
+df_all = pd.DataFrame()
 
+# processing settings
+to_exclude = ['Ankle', 'Hip', 'Hand']  # variables to exclude Kinect specific
+targets = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
 
-### VARIABLES
+rock = 0
+fast = 0
+slow = 0
 
-# current_time_offset = 1
-to_exclude = ['Ankle', 'Hip', 'Hand']  # variables to exclude
+performance = [1]
 
-
-#####################################################
-
-# FUNCTIONS
-# function that reads the input session in zip format
-# # return: list of files
-def read_zips_from_folder(folder_name):
-    sessions_folder = [folder_name]
-    folder_items = sorted(os.listdir(folder_name))
-    zip_files = [sessions_folder[0] + '/' + s for s in folder_items if s.endswith('.zip')]
-    return zip_files
-
-
-# function that combines the data across
-# return: list of files
-def read_data_files(sessions):
-    df_all = pd.DataFrame()  # Dataframe with all summarised data
-    df_ann = pd.DataFrame()  # Dataframe containing the annotations
-    # for each session in the list of sessions
-    for s in sessions:
-        # 1. Reading data from zip file
-        with zipfile.ZipFile(s) as z:
-            # get current absolute time in seconds. This is necessary to add the delta correctly
-            for info in z.infolist():
-                file_datetime = datetime.datetime(*info.date_time)
-            current_time_offset = pd.to_datetime(pd.to_datetime(file_datetime, format='%H:%M:%S.%f'), unit='s')
-            # First look for annotation.json
-            for filename in z.namelist():
-                if not os.path.isdir(filename):
-                    if '.json' in filename:
-                        with z.open(filename) as f:
-                            data = json.load(f)
-                        if 'intervals' in data:
-                            df = annotation_file_to_array(data, current_time_offset)
-                            df_ann = df_ann.append(df)
-                        elif 'frames' in data:
-                            sensor_file_start_loading = time.time()
-                            df = sensor_file_to_array(data, current_time_offset)
-                            sensor_file_stop_loading = time.time()
-                            print('Sensor file loading  ' + str(sensor_file_stop_loading - sensor_file_start_loading))
-                            # Concatenate this dataframe in the dfALL and then sort dfALL by index
-                            df_all = pd.concat([df_all, df], ignore_index=False, sort=False).sort_index()
-    return df_all, df_ann
+# load from json file
+with open('data.json') as json_file:
+    data = json.load(json_file)
 
 
-# transform a sensor file into a nd-pandas array
-# use this only if using learning-hub format and containing frames
-# IN: sensor-file in json format read into json.load(data)
-# OUT: concatenated data frame df_all
-def sensor_file_to_array(data, offset):
-    # concatenate the data with the intervals normalized and drop attribute 'frames'
-    a1 = time.time()
+# load the json parsed data
+def json_to_df(data):
     df = pd.concat([pd.DataFrame(data),
-                    json_normalize(data['frames'])],
-                   axis=1).drop('frames', 1)
-    a2 = time.time()
-    print('-- json_normalize  ' + str(a2 - a1))
-    # remove underscore from column-file e.g. 3_Ankle_Left_X becomes 3AnkleLeftX
+                    json_normalize(data['Frames'])],
+                   axis=1).drop('Frames', 1)
     df.columns = df.columns.str.replace("_", "")
-
-    # from string to timedelta + offset
-    df['frameStamp'] = pd.to_timedelta(df['frameStamp']) + offset
-
-    # retrieve the application name
-    # app_name = df.applicationName.all()
-    # remove the prefix 'frameAttributes.' from the column names
-    df.columns = df.columns.str.replace("frameAttributes", df.applicationName.all())
-
-    # set the timestamp as index
+    df['frameStamp'] = pd.to_timedelta(df['frameStamp']) #+ start_script
+    df.columns = df.columns.str.replace("frameAttributes", df["ApplicationName"].all())
     df = df.set_index('frameStamp').iloc[:, 2:]
-    # exclude duplicates (taking the first occurence in case of duplicates)
     df = df[~df.index.duplicated(keep='first')]
-    a6 = time.time()
-    # convert to numeric (when reading from JSON it converts into object in the pandas DF)
-    # with the parameter 'ignore' it will skip all the non-numerical fields
-    # df = df.apply(pd.to_numeric, errors='ignore')
     df = df.apply(lambda x: pd.to_numeric(x, errors='ignore'))
-    a7 = time.time()
-    print('-- df = df.apply(pd.to_numeric ' + str(a7 - a6))
-    # Keep the numeric types only (categorical data are not supported now)
     df = df.select_dtypes(include=['float64', 'int64'])
-    # Remove columns in which the sum of attributes is 0 (meaning there the information is 0)
     df = df.loc[:, (df.sum(axis=0) != 0)]
-    # KINECT FIX
-    # The application KienctReader can track up to 6 people, whose attributes are
-    # 1ShoulderLeftX or 3AnkleRightY. We get rid of this numbers assuming there is only 1 user
-    # This part has to be rethought in case of 2 users
+    #KINECT fix
     df.rename(columns=lambda x: re.sub('KinectReader.\d', 'KinectReader.', x), inplace=True)
     df.rename(columns=lambda x: re.sub('Kinect.\d', 'Kinect.', x), inplace=True)
-
     # Exclude irrelevant attributes
-    #for el in to_exclude:
-    #    df = df[[col for col in df.columns if el not in col]]
+    for el in to_exclude:
+        df = df[[col for col in df.columns if el not in col]]
     df = df.apply(pd.to_numeric).fillna(method='bfill')
     return df
 
 
-
-# transform an annotation file into a nd-pandas array
-# use this only if using learning-hub format and containing frames
-# IN: sensor-file in json format read into json.load(data)
-# OUT: concatenated dataframe df_all
-def annotation_file_to_array(data, offset):
-    # concatenate the data with the intervals normalized and drop attribute 'intervals'
-    df = pd.concat([pd.DataFrame(data),
-                    json_normalize(data['intervals'])],
-                   axis=1).drop('intervals', 1)
-    # convert to numeric (when reading from JSON it converts into object in the pandas DF)
-    # with the parameter 'ignore' it will skip all the non-numerical fields
-    df = df.apply(pd.to_numeric, errors='ignore')
-    # remove the prefix 'annotations.' from the column names
-    df.columns = df.columns.str.replace("annotations.", "")
-    # from string to timedelta + offset
-    df.start = pd.to_timedelta(df.start) + offset
-    # from string to timedelta + offset
-    df.end = pd.to_timedelta(df.end) + offset
-    # duration as subtractions of delta in seconds
-    df['duration'] = (df.end - df.start) / np.timedelta64(1, 's')
-    # append this dataframe to the dataframe annotations
-    df = df.fillna(method='bfill')
-    return df
+def start_tcp_server(ip,port):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind((ip, port))
+    server.listen(5)  # max backlog of connections
+    print('Listening on {}:{}'.format(ip, port))
+    servers.append(server)
 
 
-# in case of training tensor_transformation
-def tensor_transform(df_all, df_ann, res_rate, bin_size):
-    if (not df_ann.empty) and (not df_all.empty):
-        for el in to_exclude:
-            df_all = df_all[[col for col in df_all.columns if el not in col]]
-        masked_df = [  # mask the dataframe
-            df_all[(df2_start <= df_all.index) & (df_all.index <= df2_end)]
-            for df2_start, df2_end in zip(df_ann['start'], df_ann['end'])
-        ]
-        interval_max = 0
-        for dt in masked_df:
-            delta = np.timedelta64(dt.index[-1] - dt.index[0], 'ms') / np.timedelta64(1, 'ms')
-            if delta > interval_max:
-                interval_max = delta
-        df_resampled = [dt.resample(str(res_rate) + 'ms').first() if not dt.empty else None for dt in masked_df]
+def handle_client_connection(client_socket,port):
+    request = client_socket.recv(10000000)
+    #print(request)
+    json_string = json.loads(request,encoding='ascii')
+    for jst in json_string:
+        if jst["ApplicationName"] == "Kinect":
+            global df_kinect
+            df_kinect = json_to_df(jst)
 
-        # (bin_size = len(max(df_resampled, key=len))+len(min(df_resampled, key=len)))/2
-        # create a dummy ndarray with same size
-        batch = np.empty([bin_size, np.shape(df_resampled[0])[1]], dtype=float)
-        for dfs in df_resampled:
-            if np.shape(dfs)[0] < bin_size:
-                interval = np.pad(dfs.fillna(method='ffill').fillna(method='bfill'),
-                                  ((0, bin_size - np.shape(dfs)[0]), (0, 0)), 'edge')
-            elif np.shape(dfs)[0] >= bin_size:
-                interval = dfs.iloc[:bin_size].fillna(method='ffill').fillna(method='bfill')
-            batch = np.dstack((batch, np.array(interval)))
-        batch = batch[:, :, 1:].swapaxes(2, 0).swapaxes(1, 2)  # (197, 11, 59)
-        print("The shape of the batch is " + str(batch.shape))
+        elif jst["ApplicationName"] == "Myo":
+            global df_myo
+            df_myo = json_to_df(jst)
+    process_data()
+    client_socket.send("hello back".encode())
+    client_socket.close()
+
+def process_data():
+    global df_myo
+    global df_kinect
+    global df_all
+    global complete_compression
+    global slow
+    global fast
+    global rock
+    global performance
+    if (not df_myo.empty) and (not df_kinect.empty):
+
+        df_kinect["Kinect.ShoulderLeftY"].plot()
+        complete_compression = complete_compression + 1
+        print(performance)
+        if len(performance) > 10:
+            performance = performance[1:]
+        if df_kinect["Kinect.ShoulderLeftY"].index[-1] > timedelta(seconds=0.7):
+            slow = slow+1
+            feedback = "Too slow"
+            performance.append(0)
+        elif df_kinect["Kinect.ShoulderLeftY"].index[-1] < timedelta(seconds=0.4):
+            fast = fast + 1
+            feedback = "Too fast "
+            performance.append(0)
+        else:
+            rock = rock + 1
+            feedback = "You rock "
+            performance.append(1)
+        #print(performance)
+        plt.rcParams["font.size"] = 36
+        ax = plt.subplot(111)
+        ax.set_xlabel(' ')
+        incorrect = str("incorrect {:0.0f}".format((1-np.mean(performance)) * 100)+'%')
+        correct = str("correct {:0.0f}".format(np.mean(performance) * 100)+'%')
+        text(0.5, 0.5, feedback,
+             horizontalalignment='center',
+             verticalalignment='center',
+             transform=ax.transAxes)
+        text(0.5, 1,correct,
+             horizontalalignment='center',
+             verticalalignment='top',
+             transform=ax.transAxes)
+        text(0.5, 0, incorrect,
+             horizontalalignment='center',
+             verticalalignment='bottom',
+             transform=ax.transAxes)
+        plt.savefig('myfig.png')
+
+        plt.clf()
+
+        df_all = pd.concat([df_kinect, df_myo], ignore_index=False, sort=False).sort_index()
+        print(np.shape(df_all))
+
+        df_kinect = pd.DataFrame()
+        df_myo = pd.DataFrame()
+        df_all.to_csv('dfall.csv')
+        # start_processing()
+        #tensor = tensor_transform(df_all, 40, 8)
+        #print(np.shape(tensor))
+
+        #for t in targets:
+        #    model_loaded = load_model(t)
+        #    test_predictions = model_loaded.predict(tensor)
+        #    print('For target'+t+' predictions are'+test_predictions)
+
+def tensor_transform(df_all, res_rate, bin_size):
+    if (not df_all.empty) and (not df_all.empty):
+        batch = df_all.resample('200ms').first()[:bin_size].fillna(method='ffill').fillna(method='bfill')
+        #batch = batch[:, :, 1:].swapaxes(2, 0).swapaxes(1, 2)  # (197, 11, 59)
+
         # Data preprocessing - scaling the attributes
-        scalers = {}
-        for i in range(batch.shape[1]):
-            scalers[i] = preprocessing.MinMaxScaler(feature_range=(0, 1))
-            batch[:, i, :] = scalers[i].fit_transform(batch[:, i, :])
+        #scalers = {}
+        #for i in range(batch.shape[1]):
+        #    scalers[i] = preprocessing.MinMaxScaler(feature_range=(0, 1))
+        #    batch[:, i, :] = scalers[i].fit_transform(batch[:, i, :])
         return batch  # tensor
-        # calucate AUC-ROC curve value
-        # def auroc(y_true, y_pred):
-        # return tf.py_func(roc_auc_score, (y_true, y_pred), tf.double)
-
-
-
-
-def model_training(input_tensor, input_targets, df_annotations):
-    for target in input_targets:
-        print('Training model on target: ' + target)
-        labels = df_annotations[target].values
-
-        # Hyperparameters
-        test_size = 0.33
-        random_state = 88
-
-        train_set, test_set, train_labels, test_labels = train_test_split(input_tensor, labels,
-                                                                          test_size=test_size,
-                                                                          random_state=random_state)
-
-        input_tuple = (input_tensor.shape[1], input_tensor.shape[2])  # time-steps, data-dim
-        hidden_dim = 128
-        verbose, epochs, batch_size = 1, 30, 25
-        output_dim = df_annotations[target].nunique()
-        # model definition
-        print('Keras model sequential target: ' + target)
-        model = keras.Sequential([
-            keras.layers.LSTM(hidden_dim, input_shape=input_tuple),
-            keras.layers.Dense(output_dim, activation='softmax')
-        ])
-
-        # model compiling
-        model.compile(optimizer=tf.train.AdamOptimizer(),
-                      loss='sparse_categorical_crossentropy',
-                      metrics=['accuracy'])
-        # model fitting
-
-
-        model_history = model.fit(train_set, train_labels, validation_data=(test_set, test_labels), epochs=epochs,
-                                  verbose=0)
-        if target=='bodyWeight':
-            np.save('test_set_broken.npy', test_set)  # save
-            np.save('test_labels_broken.npy', test_labels)  # save
-
-        # model storing
-        store_model(model, 'models/model_' + target + '.h5')
-
-        y_prob = model.predict(test_set)
-        print('Probability:', y_prob)
-        test_loss, test_acc = model.evaluate(test_set, test_labels)
-        print('Test accuracy:', test_acc)
-        print('Test loss:', test_loss)
-        if target == 'classRelease':
-            print('Roc Auc', roc_auc_score(test_labels, y_prob.argmax(axis=1)))
-
-        y_true = pd.Series(test_labels)
-        y_pred = pd.Series(y_prob.argmax(axis=1))
-        pd.crosstab(y_true, y_pred, rownames=['True'], colnames=['Predicted'], margins=True)
-
-
-# function
-# IN: keras.model and path/to/model.h5
-def store_model(the_model, path_model):
-    print('Saved model path: ' + path_model)
-    the_model.save(path_model)
 
 
 def load_model(target_name):
@@ -259,30 +177,21 @@ def load_model(target_name):
     return new_model
 
 
-#####################################################
+if __name__ == '__main__':
 
-# read data from session folder
-t0 = time.time()
-sessions = read_zips_from_folder('manual_sessions')
-# get the sensor data and annotation files (if exist)
-sensor_data, annotations = read_data_files(sessions)
-t1 = time.time()
-print('loading ' + str(len(sessions)) + ' session (s)' + str(t1 - t0))
+    for port in port_list:
+        start_tcp_server(bind_ip,port)
 
-# in case of training
-tensor = tensor_transform(sensor_data, annotations, 40, 8)
-#pd.DataFrame(tensor.flatten()).to_csv('tensor.csv')
-annotations.to_csv('annotation_data_broken.csv')
+    while True:
+        readable,_,_ = select.select(servers, [], [])
+        ready_server = readable[0]
+        request_count = request_count + 1
+        connection, address = ready_server.accept()
+        print('Accepted connection from {}:{}'.format(address[0], address[1]))
+        client_handler = threading.Thread(
+            target=handle_client_connection,
+            args=(connection,port)
+        )
+        client_handler.start()
 
-t2 = time.time()
-print('transforming into tensor (s)' + str(t2 - t1))
 
-# targets = ['classRate', 'classDepth', 'classRelease']
-targets = ['armsLocked', 'bodyWeight']
-model_training(tensor, targets, annotations)
-t3 = time.time()
-print('model training (s)' + str(t3 - t2))
-
-#for t in targets:
-#    model_loaded = load_model(t)
-#t4 = time.time()
