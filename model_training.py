@@ -65,7 +65,7 @@ def read_data_files(sessions):
                             sensor_file_start_loading = time.time()
                             df = sensor_file_to_array(data, current_time_offset)
                             sensor_file_stop_loading = time.time()
-                            print('Sensor file loading  ' + str(sensor_file_stop_loading - sensor_file_start_loading))
+                            print(('Sensor file loading  ' + str(sensor_file_stop_loading - sensor_file_start_loading)))
                             # Concatenate this dataframe in the dfALL and then sort dfALL by index
                             df_all = pd.concat([df_all, df], ignore_index=False, sort=False).sort_index()
     return df_all, df_ann
@@ -82,7 +82,7 @@ def sensor_file_to_array(data, offset):
                     json_normalize(data['frames'])],
                    axis=1).drop('frames', 1)
     a2 = time.time()
-    print('-- json_normalize  ' + str(a2 - a1))
+    print(('-- json_normalize  ' + str(a2 - a1)))
     # remove underscore from column-file e.g. 3_Ankle_Left_X becomes 3AnkleLeftX
     df.columns = df.columns.str.replace("_", "")
 
@@ -104,7 +104,7 @@ def sensor_file_to_array(data, offset):
     # df = df.apply(pd.to_numeric, errors='ignore')
     df = df.apply(lambda x: pd.to_numeric(x, errors='ignore'))
     a7 = time.time()
-    print('-- df = df.apply(pd.to_numeric ' + str(a7 - a6))
+    print(('-- df = df.apply(pd.to_numeric ' + str(a7 - a6)))
     # Keep the numeric types only (categorical data are not supported now)
     df = df.select_dtypes(include=['float64', 'int64'])
     # Remove columns in which the sum of attributes is 0 (meaning there the information is 0)
@@ -177,8 +177,8 @@ def tensor_transform(df_all, df_ann, res_rate, bin_size):
             if not np.isnan(np.array(interval)).any():
                 batch = np.dstack((batch, np.array(interval)))
         batch = batch[:, :, 1:].swapaxes(2, 0).swapaxes(1, 2)  # (197, 11, 59)
-        print("The shape of the batch is " + str(batch.shape))
-        print('Batch is containing nulls? ' + str(np.isnan(batch).any()))
+        print(("The shape of the batch is " + str(batch.shape)))
+        print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
         # Data preprocessing - scaling the attributes
         scalers = {}
         for i in range(batch.shape[1]):
@@ -194,7 +194,7 @@ def tensor_transform(df_all, df_ann, res_rate, bin_size):
 
 def model_training(input_tensor, input_targets, df_annotations):
     for target in input_targets:
-        print('Training model on target: ' + target)
+        print(('Training model on target: ' + target))
         labels = df_annotations[target].values
 
         # Hyperparameters
@@ -209,7 +209,7 @@ def model_training(input_tensor, input_targets, df_annotations):
         verbose, epochs, batch_size = 1, 30, 25
         output_dim = df_annotations[target].nunique()
         # model definition
-        print('Keras model sequential target: ' + target)
+        print(('Keras model sequential target: ' + target))
         model = keras.Sequential([
             keras.layers.LSTM(hidden_dim, input_shape=input_tuple),
             keras.layers.Dense(output_dim, activation='softmax')
@@ -234,10 +234,10 @@ def model_training(input_tensor, input_targets, df_annotations):
         y_prob = model.predict(test_set)
         # print('Probability:', y_prob)
         test_loss, test_acc = model.evaluate(test_set, test_labels)
-        print('Test accuracy:', test_acc)
-        print('Test loss:', test_loss)
+        print(('Test accuracy:', test_acc))
+        print(('Test loss:', test_loss))
         if target == 'classRelease':
-            print('Roc Auc', roc_auc_score(test_labels, y_prob.argmax(axis=1)))
+            print(('Roc Auc', roc_auc_score(test_labels, y_prob.argmax(axis=1))))
 
         y_true = pd.Series(test_labels)
         y_pred = pd.Series(y_prob.argmax(axis=1))
@@ -247,7 +247,7 @@ def model_training(input_tensor, input_targets, df_annotations):
 # function
 # IN: keras.model and path/to/model.h5
 def store_model(the_model, path_model):
-    print('Saved model path: ' + path_model)
+    print(('Saved model path: ' + path_model))
     the_model.save(path_model)
 
 
@@ -256,7 +256,7 @@ def load_model(target_name):
     if os.path.isfile(filename):
         new_model = keras.models.load_model(filename)
     else:
-        print(filename + ' not found')
+        print((filename + ' not found'))
     return new_model
 
 
@@ -268,19 +268,19 @@ sessions = read_zips_from_folder('manual_sessions')
 # get the sensor data and annotation files (if exist)
 sensor_data, annotations = read_data_files(sessions)
 t1 = time.time()
-print('loading ' + str(len(sessions)) + ' session (s)' + str(t1 - t0))
+print(('loading ' + str(len(sessions)) + ' session (s)' + str(t1 - t0)))
 
 # in case of training
 tensor = tensor_transform(sensor_data, annotations, 40, 8)
 
 t2 = time.time()
-print('transforming into tensor (s)' + str(t2 - t1))
+print(('transforming into tensor (s)' + str(t2 - t1)))
 
 # targets = ['classRate', 'classDepth', 'classRelease']
 targets = ['armsLocked', 'bodyWeight']
 model_training(tensor, targets, annotations)
 t3 = time.time()
-print('model training (s)' + str(t3 - t2))
+print(('model training (s)' + str(t3 - t2)))
 
 for t in targets:
     model_loaded = load_model(t)
