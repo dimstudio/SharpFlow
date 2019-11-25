@@ -162,7 +162,6 @@ def tensor_transform(df_all, df_ann, res_rate, bin_size):
                 interval_max = delta
         df_resampled = [dt.resample(str(res_rate) + 'ms').first() if not dt.empty else None for dt in masked_df]
 
-
         # create a dummy ndarray with same size
         batch = np.empty([bin_size, np.shape(df_resampled[0])[1]], dtype=float)
         for dfs in df_resampled:
@@ -177,9 +176,11 @@ def tensor_transform(df_all, df_ann, res_rate, bin_size):
         print(("The shape of the batch is " + str(batch.shape)))
         print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
         # Data preprocessing - scaling the attributes
+        # TODO need the scalers for later rescaling
         scalers = {}
         for i in range(batch.shape[1]):
-            scalers[i] = preprocessing.MinMaxScaler(feature_range=(0, 1))
+            # Using tanh-activation function --> scale between -1 and 1
+            scalers[i] = preprocessing.MinMaxScaler(feature_range=(-1, 1))
             batch[:, i, :] = scalers[i].fit_transform(batch[:, i, :])
         return batch  # tensor
         # calucate AUC-ROC curve value
@@ -187,52 +188,59 @@ def tensor_transform(df_all, df_ann, res_rate, bin_size):
         # return tf.py_func(roc_auc_score, (y_true, y_pred), tf.double)
 
 
-
-
 def model_training(input_tensor, input_targets, df_annotations):
+    # Stack the target values
+    modelname = ""
     for target in input_targets:
-        print(('Training model on target: ' + target))
-        labels = df_annotations[target].values
+        # print(('Training model on target: ' + target))
+        modelname += target
+    labels = df_annotations[input_targets].values
 
-        # Hyperparameters
-        test_size = 0.33
-        random_state = 88
-        print("batch size: " + str(np.shape(input_tensor)) + " labels: " + str(np.shape(labels)))
-        train_set, test_set, train_labels, test_labels = train_test_split(input_tensor, labels, test_size=test_size, random_state=random_state)
-        input_tuple = (input_tensor.shape[1], input_tensor.shape[2])  # time-steps, data-dim
-        hidden_dim = 128
-        verbose, epochs, batch_size = 1, 30, 25
-        output_dim = df_annotations[target].nunique()
-        # model definition
-        print(('Keras model sequential target: ' + target))
-        model = keras.Sequential([
-            keras.layers.LSTM(hidden_dim, input_shape=input_tuple),
-            keras.layers.Dense(output_dim, activation='softmax')
-        ])
+    # Hyperparameters
+    test_size = 0.33
+    random_state = 88
+    print("batch size: " + str(np.shape(input_tensor)) + " labels: " + str(np.shape(labels)))
+    train_set, test_set, train_labels, test_labels = train_test_split(input_tensor, labels, test_size=test_size, random_state=random_state)
+    input_tuple = (input_tensor.shape[1], input_tensor.shape[2])  # time-steps, data-dim
+    hidden_dim = 128
+    verbose, epochs, batch_size = 2, 30, 25
+    # TODO make outputdim number of targets (and no softmax later on, because no classification)
+    output_dim = len(input_targets)
+    # output_dim = df_annotations[target].nunique()
+    # model definition
+    print(('Keras model sequential target: ' + modelname))
+    print(f"Output dimension: {output_dim}")
+    # TODO Try stacking LSTMs
+    # NOTE when stacking LSTMs zou have to include return_sequences=True
+    model = keras.Sequential([
+        keras.layers.LSTM(units=hidden_dim, input_shape=input_tuple, return_sequences=True),
+        keras.layers.LSTM(units=hidden_dim//2),
+        keras.layers.Dense(output_dim, activation='tanh')
+    ])
 
-        # model compiling
-        model.compile(optimizer=tf.train.AdamOptimizer(),
-                      loss='sparse_categorical_crossentropy',
-                      metrics=['accuracy'])
-        # model fitting
+    # model compiling
+    # TODO change loss to root_mean_squared_error, metrics to MSE
+    model.compile(optimizer=tf.train.AdamOptimizer(),
+                  loss='mse',
+                  metrics=['mse'])
+    # model fitting
+    model_history = model.fit(train_set, train_labels, validation_data=(test_set, test_labels), epochs=epochs,
+                              verbose=verbose)
 
+    # model storing
+    store_model(model, 'models/model_' + modelname + '.h5')
 
-        model_history = model.fit(train_set, train_labels, validation_data=(test_set, test_labels), epochs=epochs,
-                                  verbose=0)
+    y_prob = model.predict(test_set)
+    test_loss, test_acc = model.evaluate(test_set, test_labels)
+    print(('Test accuracy:', test_acc))
+    print(('Test loss:', test_loss))
+    # if target == 'classRelease':
+    #     print(('Roc Auc', roc_auc_score(test_labels, y_prob.argmax(axis=1))))
 
-        # model storing
-        store_model(model, 'models/model_' + target + '.h5')
-
-        y_prob = model.predict(test_set)
-        test_loss, test_acc = model.evaluate(test_set, test_labels)
-        print(('Test accuracy:', test_acc))
-        print(('Test loss:', test_loss))
-        if target == 'classRelease':
-            print(('Roc Auc', roc_auc_score(test_labels, y_prob.argmax(axis=1))))
-
-        y_true = pd.Series(test_labels)
-        y_pred = pd.Series(y_prob.argmax(axis=1))
-        pd.crosstab(y_true, y_pred, rownames=['True'], colnames=['Predicted'], margins=True)
+    # Don't know what this is for...
+    # y_true = pd.Series(test_labels)
+    # y_pred = pd.Series(y_prob.argmax(axis=1))
+    # pd.crosstab(y_true, y_pred, rownames=['True'], colnames=['Predicted'], margins=True)
 
 
 # function
