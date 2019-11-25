@@ -126,15 +126,16 @@ def process_data():
         cc_duration = df_kinect["Kinect.ShoulderLeftY"].index[-1].total_seconds()
         bpm = 60.0 / cc_duration
         plot_gauge(bpm, "gauge.png")
+        df_all = pd.concat([df_kinect, df_myo], ignore_index=False, sort=False).sort_index()
+        if not df_all.empty:
+            tensor = tensor_transform(df_all, 150, 8)
+            print("tensor transformation "+str(np.shape(tensor)))
+            for t in targets:
+                model_loaded = load_model(t, compile=False)
+                test_predictions = model_loaded.predict(tensor,steps=1)
+                print(('For target'+t+' predictions are'+test_predictions))
         df_kinect = pd.DataFrame()
         df_myo = pd.DataFrame()
-        df_all = pd.concat([df_kinect, df_myo], ignore_index=False, sort=False).sort_index()
-
-        tensor = tensor_transform(df_all, 40, 8)
-        for t in targets:
-            model_loaded = load_model(t)
-            test_predictions = model_loaded.predict(tensor,steps=1)
-            print(('For target'+t+' predictions are'+test_predictions))
 
 
 def plot_gauge(bpm, filename):
@@ -156,15 +157,15 @@ def plot_gauge(bpm, filename):
 
 
 def tensor_transform(df_all, res_rate, bin_size):
-    if (not df_all.empty) and (not df_all.empty):
-        batch = df_all.resample('200ms').first()[:bin_size].fillna(method='ffill').fillna(method='bfill')
-        # batch = batch[:, :, 1:].swapaxes(2, 0).swapaxes(1, 2)  # (197, 11, 59)
+    if not df_all.empty:
+        batch = df_all.resample(str(res_rate) + 'ms').first()[:bin_size].fillna(method='ffill').fillna(method='bfill')
+        #batch = batch[:, :, 1:].swapaxes(2, 0).swapaxes(1, 2)  # (197, 11, 59)
 
         # Data preprocessing - scaling the attributes
-        # scalers = {}
-        # for i in range(batch.shape[1]):
-        #    scalers[i] = preprocessing.MinMaxScaler(feature_range=(0, 1))
-        #    batch[:, i, :] = scalers[i].fit_transform(batch[:, i, :])
+        scalers = {}
+        for i in range(batch.shape[1]):
+            scalers[i] = preprocessing.MinMaxScaler(feature_range=(0, 1))
+            batch[:, i, :] = scalers[i].fit_transform(batch[:, i, :])
         return batch  # tensor
 
 

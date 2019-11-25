@@ -7,7 +7,8 @@
 # set of imports
 import numpy as np
 import seaborn as sns
-import os 
+import os
+
 import zipfile
 import json
 import re
@@ -32,6 +33,8 @@ import tensorflow as tf
 from tensorflow import keras
 
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
 # In[2]:
 
 
@@ -43,6 +46,7 @@ sessions = [sessions_folder[0] +'/'+s for s in folder_items if s.endswith('.zip'
 
 
 # In[3]:
+
 
 
 dfALL = pd.DataFrame() # Dataframe with all summarised data
@@ -136,15 +140,12 @@ for s in sessions:
                         # This part has to be rethinked in case of 2 users
                         df.rename(columns=lambda x: re.sub('KinectReader.\d','KinectReader.',x),inplace=True)
                         df.rename(columns=lambda x: re.sub('Kinect.\d','Kinect.',x),inplace=True)
-                        
+
                         # Concate this dataframe in the dfALL and then sort dfALL by index
                         dfALL = pd.concat([dfALL, df], ignore_index=False,sort=False).sort_index()
-                        
+
     
 df1 =  dfALL.apply(pd.to_numeric).fillna(method='bfill')
-
-
-# In[4]:
 
 
 # Exclude irrelevant attributes 
@@ -169,18 +170,12 @@ for dt in masked_df:
         #KinectElbowLeftX = dt.iloc[:,0] #example 
 resample_rate = 40#interval_max/80
 
-#resample_rate = resample_rate + 2 # fix to get 10 bins
-print(resample_rate)
-
-
-# In[6]:
-
 
 df_resampled = [dt.resample(str(resample_rate)+'ms').first() if not dt.empty else None for dt in masked_df]
 bin_size = 8
 #(bin_size = len(max(df_resampled, key=len))+len(min(df_resampled, key=len)))/2
 # create a dummy ndarray with same size
-batch = np.empty([bin_size, np.shape(df_resampled[0])[1]], dtype=float) 
+batch = np.empty([bin_size, np.shape(df_resampled[0])[1]], dtype=float)
 for dfs in df_resampled:
     if np.shape(dfs)[0]< bin_size:
         interval = np.pad(dfs.fillna(method='ffill').fillna(method='bfill'),((0,bin_size-np.shape(dfs)[0]),(0,0)),'edge')
@@ -188,11 +183,8 @@ for dfs in df_resampled:
         interval = dfs.iloc[:bin_size].fillna(method='ffill').fillna(method='bfill')
     batch = np.dstack((batch,np.array(interval)))
 batch = batch[:,:,1:].swapaxes(2,0).swapaxes(1,2)#(197, 11, 59)
-print(batch.shape)
-
-
-# In[7]:
-
+print(("The shape of the batch is " + str(batch.shape)))
+print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
 
 # Data preprocessing - scaling the attributes
 scalers = {}
@@ -212,6 +204,7 @@ targets = ['armsLocked','bodyWeight']
 #fig = plt.figure()
 for target in targets: 
     labels = dfAnn[target].fillna(method='bfill').values #fix bodyweight forgotten
+    print("batch size: " + str(np.shape(batch)) + " labels: " + str(np.shape(labels)))
     train_set, test_set, train_labels, test_labels = train_test_split(batch, labels, test_size=0.33, random_state=88)
     INPUT_TUPLE = (batch.shape[1], batch.shape[2]) # time-steps, data-dim
     HIDDEN_DIM = 128
@@ -224,7 +217,7 @@ for target in targets:
         keras.layers.Dense(OUTPUT_DIM, activation='softmax') 
     ])
     
-    model.compile(optimizer=tf.train.AdamOptimizer(),
+    model.compile(optimizer=tf.compat.v1.train.AdamOptimizer(),
                   loss='sparse_categorical_crossentropy',
                   metrics=['accuracy'])
     model_history = model.fit(train_set, train_labels, validation_data=(test_set, test_labels), epochs=epochs, verbose=0)
@@ -235,46 +228,46 @@ for target in targets:
     b = model_history.history['val_loss']
     d = [a_i - b_i for a_i, b_i in zip(a, b)]
     linex = next(d.index(i) for i in reversed(d) if i >= 0)
-    plt.figure(figsize = (5,4))
-    plt.plot(model_history.history['loss'], color='darkblue')
-    plt.plot(model_history.history['val_loss'], color='cornflowerblue')
-    #plt.title('Loss '+target)
-    plt.ylabel('loss '+target)
-    plt.xlabel('epoch')
-    plt.axvline(x=linex, color='firebrick', linestyle='--', label='overfitting point')
-    plt.legend(['train_loss', 'valid_loss','overfitting point'],loc='best')
-    plt.savefig('loss_'+target+'.pdf', bbox_inches = "tight")
-    plt.show()
-
-    plt.figure(figsize = (5,4))
-    plt.plot(model_history.history['acc'], color='green')
-    plt.plot(model_history.history['val_acc'], color='darkseagreen')
-    #plt.title('Accuracy '+target)
-    plt.ylabel('accuracy '+target)
-    plt.xlabel('epoch')
-    plt.axvline(x=linex, color='firebrick', linestyle='--', label='overfitting point')
-    plt.legend(['train_acc', 'valid_acc','overfitting point'],loc='best')
-    plt.savefig('acc_'+target+'.pdf', bbox_inches = "tight")
-    plt.show()
-    
+    # plt.figure(figsize = (5,4))
+    # plt.plot(model_history.history['loss'], color='darkblue')
+    # plt.plot(model_history.history['val_loss'], color='cornflowerblue')
+    # #plt.title('Loss '+target)
+    # plt.ylabel('loss '+target)
+    # plt.xlabel('epoch')
+    # plt.axvline(x=linex, color='firebrick', linestyle='--', label='overfitting point')
+    # plt.legend(['train_loss', 'valid_loss','overfitting point'],loc='best')
+    # plt.savefig('loss_'+target+'.pdf', bbox_inches = "tight")
+    # plt.show()
+    #
+    # plt.figure(figsize = (5,4))
+    # plt.plot(model_history.history['acc'], color='green')
+    # plt.plot(model_history.history['val_acc'], color='darkseagreen')
+    # #plt.title('Accuracy '+target)
+    # plt.ylabel('accuracy '+target)
+    # plt.xlabel('epoch')
+    # plt.axvline(x=linex, color='firebrick', linestyle='--', label='overfitting point')
+    # plt.legend(['train_acc', 'valid_acc','overfitting point'],loc='best')
+    # plt.savefig('acc_'+target+'.pdf', bbox_inches = "tight")
+    # plt.show()
+    #
     
     modelrefit = model.fit(train_set, train_labels, validation_data=(test_set, test_labels), epochs=linex, verbose=0)
     test_loss, test_acc = model.evaluate(test_set, test_labels)
     
     print('Test accuracy:', test_acc) 
     print('Test loss:', test_loss)
-    if target == 'classRelease':
-        print('Roc Auc', roc_auc_score(test_labels, y_prob.argmax(axis=1)))
-
-    matrix = metrics.confusion_matrix(test_labels, y_prob.argmax(axis=1))
-    df_cm = pd.DataFrame(matrix, list(range(OUTPUT_DIM)),list(range(OUTPUT_DIM)))
-    sns.set(font_scale=1.4)#for label size
-    plt.figure(figsize = (5,4))
-    sns.heatmap(df_cm, annot=True,annot_kws={"size": 16},fmt='g')
-    plt.title(target)
-    plt.xlabel('Predicted')
-    plt.ylabel('Actual')
-    plt.savefig('confusion-'+target+'.pdf', bbox_inches = "tight")
+    # if target == 'classRelease':
+    #     print('Roc Auc', roc_auc_score(test_labels, y_prob.argmax(axis=1)))
+    #
+    # matrix = metrics.confusion_matrix(test_labels, y_prob.argmax(axis=1))
+    # df_cm = pd.DataFrame(matrix, list(range(OUTPUT_DIM)),list(range(OUTPUT_DIM)))
+    # sns.set(font_scale=1.4)#for label size
+    # plt.figure(figsize = (5,4))
+    # sns.heatmap(df_cm, annot=True,annot_kws={"size": 16},fmt='g')
+    # plt.title(target)
+    # plt.xlabel('Predicted')
+    # plt.ylabel('Actual')
+    # plt.savefig('confusion-'+target+'.pdf', bbox_inches = "tight")
     #plt.plot(model_history.history['loss'])
     #t = model_history.history['loss']
     #q = model_history.history['acc']
@@ -301,30 +294,30 @@ e = dfB[['bodyWeight','armsLocked']].groupby(['bodyWeight']).count()['armsLocked
 pd.concat([d,e],1).T.plot(kind='bar',rot=0)
 
 
-plt.ylabel('Class distribution')
-plt.savefig('manual-annotations-class-distribution.pdf')
+# plt.ylabel('Class distribution')
+# plt.savefig('manual-annotations-class-distribution.pdf')
 
 
 # In[378]:
 
 
-dfA = dfAnn.copy()
-dfA.recordingID = dfA.recordingID.str.slice(0, 3, 1) 
-dfA['recordingID'] = dfA['recordingID'].map({'P0-': 'P00', 'P2-': 'P01', 'P4-': 'P02', 'P5-': 'P03', 'P6-': 'P04', 'P7-': 'P05', 'P8-': 'P06', 'P9-': 'P07', 'P10': 'P08','P11': 'P09','P13': 'P10'})
-dfA = dfA.sort_index(axis=1)
-fig = plt.figure()
-dfA[['recordingID','classRate','compMeanRate']].groupby(['recordingID','classRate']).count().unstack().fillna(0)['compMeanRate'].plot(kind="bar")
-plt.xlabel('Participants')
-plt.ylabel('Class distribution')
-plt.savefig('participants-classRate-distribution.pdf')
-dfA[['recordingID','classDepth','compDepth']].groupby(['recordingID','classDepth']).count().unstack().fillna(0)['compDepth'].plot(kind="bar")
-plt.xlabel('Participants')
-plt.ylabel('Class distribution')
-plt.savefig('participants-classDepth-distribution.pdf')
-dfA[['recordingID','classRelease','compReleaseDepth']].groupby(['recordingID','classRelease']).count().unstack().fillna(0)['compReleaseDepth'].plot(kind="bar")
-plt.xlabel('Participants')
-plt.ylabel('Class distribution')
-plt.savefig('participants-classRelease-distribution.pdf')
+# dfA = dfAnn.copy()
+# dfA.recordingID = dfA.recordingID.str.slice(0, 3, 1)
+# dfA['recordingID'] = dfA['recordingID'].map({'P0-': 'P00', 'P2-': 'P01', 'P4-': 'P02', 'P5-': 'P03', 'P6-': 'P04', 'P7-': 'P05', 'P8-': 'P06', 'P9-': 'P07', 'P10': 'P08','P11': 'P09','P13': 'P10'})
+# dfA = dfA.sort_index(axis=1)
+# fig = plt.figure()
+# dfA[['recordingID','classRate','compMeanRate']].groupby(['recordingID','classRate']).count().unstack().fillna(0)['compMeanRate'].plot(kind="bar")
+# plt.xlabel('Participants')
+# plt.ylabel('Class distribution')
+# plt.savefig('participants-classRate-distribution.pdf')
+# dfA[['recordingID','classDepth','compDepth']].groupby(['recordingID','classDepth']).count().unstack().fillna(0)['compDepth'].plot(kind="bar")
+# plt.xlabel('Participants')
+# plt.ylabel('Class distribution')
+# plt.savefig('participants-classDepth-distribution.pdf')
+# dfA[['recordingID','classRelease','compReleaseDepth']].groupby(['recordingID','classRelease']).count().unstack().fillna(0)['compReleaseDepth'].plot(kind="bar")
+# plt.xlabel('Participants')
+# plt.ylabel('Class distribution')
+# plt.savefig('participants-classRelease-distribution.pdf')
 
 
 # In[386]:
@@ -332,7 +325,6 @@ plt.savefig('participants-classRelease-distribution.pdf')
 
 y_prob = model.predict(test_set) 
 matrix = metrics.confusion_matrix(test_labels, y_prob.argmax(axis=1))
-print(matrix)
 y_true = pd.Series(test_labels)
 y_pred = pd.Series(y_prob.argmax(axis=1))
 
@@ -342,23 +334,23 @@ pd.crosstab(y_true, y_pred, rownames=['True'], colnames=['Predicted'], margins=T
 # In[91]:
 
 
-import matplotlib.dates as mdates
-
-index = 10
-g = dt.iloc[:,index]
-h = dt.iloc[:,index].resample(str(49)+'ms').first()
-dfh = h.to_frame()
-dfh["c"] = np.arange(0,np.size(h)).tolist()
-plt.figure(figsize=(6,5))
-ax1 = g.plot(label='actual time-series')
-ax2 = dfh[dt.iloc[:,index].name].plot(color='orange',label='resampled time-series')
-plt.xlabel('Time bins')
-plt.ylabel(dt.iloc[:,index].name)
-ax1.legend()
-ax2.legend()
-ax2.xaxis.set_major_locator(mdates.MicrosecondLocator(interval=45000))
-ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m:%S.%f'))
-plt.savefig('cpr-resampling.pdf')
+# import matplotlib.dates as mdates
+#
+# index = 10
+# g = dt.iloc[:,index]
+# h = dt.iloc[:,index].resample(str(49)+'ms').first()
+# dfh = h.to_frame()
+# dfh["c"] = np.arange(0,np.size(h)).tolist()
+# plt.figure(figsize=(6,5))
+# ax1 = g.plot(label='actual time-series')
+# ax2 = dfh[dt.iloc[:,index].name].plot(color='orange',label='resampled time-series')
+# plt.xlabel('Time bins')
+# plt.ylabel(dt.iloc[:,index].name)
+# ax1.legend()
+# ax2.legend()
+# ax2.xaxis.set_major_locator(mdates.MicrosecondLocator(interval=45000))
+# ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m:%S.%f'))
+# plt.savefig('cpr-resampling.pdf')
 
 
 # In[ ]:
@@ -370,88 +362,64 @@ plt.savefig('cpr-resampling.pdf')
 # In[245]:
 
 
-print(dfAnn.iloc[0:5,:].dropna().to_latex().encode('ascii','ignore'))
+# print(dfAnn.iloc[0:5,:].dropna().to_latex().encode('ascii','ignore'))
 
 
 # In[92]:
 
 
-# add fake intervals adding random time offset
-import random
-xm = dfAnn.duration.median()
-dfAnnFake = dfAnn.copy()
-format = lambda x: x + pd.DateOffset(seconds=float(random.randint(-int(xm*100), int(xm*100)))/100)
-dfAnnFake.start = dfAnn.start.map(format)
-dfAnnFake.end = dfAnnFake.start + pd.to_timedelta(dfAnnFake.duration, unit='s')
+# # add fake intervals adding random time offset
+# import random
+# xm = dfAnn.duration.median()
+# dfAnnFake = dfAnn.copy()
+# format = lambda x: x + pd.DateOffset(seconds=float(random.randint(-int(xm*100), int(xm*100)))/100)
+# dfAnnFake.start = dfAnn.start.map(format)
+# dfAnnFake.end = dfAnnFake.start + pd.to_timedelta(dfAnnFake.duration, unit='s')
 
 
 # In[21]:
 
 
 
-dfALL.to_csv('sensor_data_good.csv')
+# dfALL.to_csv('sensor_data_good.csv')
 
 
 # In[40]:
 
 
-#pd.DataFrame(test_set).to_csv('test_set_good.csv')
-np.savetxt("test_set_good.csv", test_set, delimiter=",")
+# #pd.DataFrame(test_set).to_csv('test_set_good.csv')
+# np.savetxt("test_set_good.csv", test_set, delimiter=",")
 
 
 # In[27]:
 
-
-print(INPUT_TUPLE)
-
-
-# In[32]:
-
-
-print(('train_set '+str(train_set.shape)))
-print(('test_set ' + str(test_set.shape)))
-print(('train_labels ' + str(train_labels.shape)))
-print(('test_labels ' + str(test_labels.shape)))
+# print(('train_set '+str(train_set.shape)))
+# print(('test_set ' + str(test_set.shape)))
+# print(('train_labels ' + str(train_labels.shape)))
+# print(('test_labels ' + str(test_labels.shape)))
 
 
-# In[33]:
 
+# # In[57]:
+#
+#
+# m,n,r = test_set.shape
+# out_arr = np.column_stack((np.repeat(np.arange(m),n),test_set.reshape(m*n,-1)))
+# out_df = pd.DataFrame(out_arr)
+# np.shape(out_df.values)
+# np.shape(test_set)
+# #.to_csv('test_set_good.csv')
 
-model
-
-
-# In[57]:
-
-
-m,n,r = test_set.shape
-out_arr = np.column_stack((np.repeat(np.arange(m),n),test_set.reshape(m*n,-1)))
-out_df = pd.DataFrame(out_arr)
-np.shape(out_df.values)
-np.shape(test_set)
-#.to_csv('test_set_good.csv')
-
-
-# In[91]:
-
-
-#np.save('test_set_good.npy', test_set) # save
-xtest_set = np.load('test_set_broken.npy') # load
-ytest_set = np.load('test_set_good.npy') # load
-xtest_labels = np.load('test_labels_broken.npy') # load
-
-xtest_loss, xtest_acc = model.evaluate(xtest_set, xtest_labels)
-#print('Test accuracy:', xtest_set)
-#print('Test loss:', xtest_loss)
-np.isnan(xtest_set).any()
-
-
-# In[63]:
-
-
-tf.version
-
-
-# In[ ]:
+#
+# #np.save('test_set_good.npy', test_set) # save
+# xtest_set = np.load('test_set_broken.npy') # load
+# ytest_set = np.load('test_set_good.npy') # load
+# xtest_labels = np.load('test_labels_broken.npy') # load
+#
+# xtest_loss, xtest_acc = model.evaluate(xtest_set, xtest_labels)
+# #print('Test accuracy:', xtest_set)
+# #print('Test loss:', xtest_loss)
+# np.isnan(xtest_set).any()
 
 
 

@@ -47,6 +47,7 @@ def read_data_files(sessions):
     # for each session in the list of sessions
     for s in sessions:
         # 1. Reading data from zip file
+        print("Processing session: "+s)
         with zipfile.ZipFile(s) as z:
             # get current absolute time in seconds. This is necessary to add the delta correctly
             for info in z.infolist():
@@ -65,9 +66,11 @@ def read_data_files(sessions):
                             sensor_file_start_loading = time.time()
                             df = sensor_file_to_array(data, current_time_offset)
                             sensor_file_stop_loading = time.time()
-                            print(('Sensor file loading  ' + str(sensor_file_stop_loading - sensor_file_start_loading)))
+                            #print(('Sensor file loading  ' + str(sensor_file_stop_loading - sensor_file_start_loading)))
                             # Concatenate this dataframe in the dfALL and then sort dfALL by index
                             df_all = pd.concat([df_all, df], ignore_index=False, sort=False).sort_index()
+                            df_all = df_all.apply(pd.to_numeric).fillna(method='bfill')
+
     return df_all, df_ann
 
 
@@ -77,12 +80,10 @@ def read_data_files(sessions):
 # OUT: concatenated data frame df_all
 def sensor_file_to_array(data, offset):
     # concatenate the data with the intervals normalized and drop attribute 'frames'
-    a1 = time.time()
     df = pd.concat([pd.DataFrame(data),
                     json_normalize(data['frames'])],
                    axis=1).drop('frames', 1)
-    a2 = time.time()
-    print(('-- json_normalize  ' + str(a2 - a1)))
+
     # remove underscore from column-file e.g. 3_Ankle_Left_X becomes 3AnkleLeftX
     df.columns = df.columns.str.replace("_", "")
 
@@ -98,13 +99,12 @@ def sensor_file_to_array(data, offset):
     df = df.set_index('frameStamp').iloc[:, 2:]
     # exclude duplicates (taking the first occurence in case of duplicates)
     df = df[~df.index.duplicated(keep='first')]
-    a6 = time.time()
+
     # convert to numeric (when reading from JSON it converts into object in the pandas DF)
     # with the parameter 'ignore' it will skip all the non-numerical fields
     # df = df.apply(pd.to_numeric, errors='ignore')
     df = df.apply(lambda x: pd.to_numeric(x, errors='ignore'))
-    a7 = time.time()
-    print(('-- df = df.apply(pd.to_numeric ' + str(a7 - a6)))
+
     # Keep the numeric types only (categorical data are not supported now)
     df = df.select_dtypes(include=['float64', 'int64'])
     # Remove columns in which the sum of attributes is 0 (meaning there the information is 0)
@@ -116,10 +116,6 @@ def sensor_file_to_array(data, offset):
     df.rename(columns=lambda x: re.sub('KinectReader.\d', 'KinectReader.', x), inplace=True)
     df.rename(columns=lambda x: re.sub('Kinect.\d', 'Kinect.', x), inplace=True)
 
-    # Exclude irrelevant attributes
-    #for el in to_exclude:
-    #    df = df[[col for col in df.columns if el not in col]]
-    df = df.apply(pd.to_numeric).fillna(method='bfill')
     return df
 
 
@@ -151,6 +147,7 @@ def annotation_file_to_array(data, offset):
 
 # in case of training tensor_transformation
 def tensor_transform(df_all, df_ann, res_rate, bin_size):
+
     if (not df_ann.empty) and (not df_all.empty):
         for el in to_exclude:
             df_all = df_all[[col for col in df_all.columns if el not in col]]
@@ -165,7 +162,7 @@ def tensor_transform(df_all, df_ann, res_rate, bin_size):
                 interval_max = delta
         df_resampled = [dt.resample(str(res_rate) + 'ms').first() if not dt.empty else None for dt in masked_df]
 
-        # (bin_size = len(max(df_resampled, key=len))+len(min(df_resampled, key=len)))/2
+
         # create a dummy ndarray with same size
         batch = np.empty([bin_size, np.shape(df_resampled[0])[1]], dtype=float)
         for dfs in df_resampled:
@@ -174,8 +171,8 @@ def tensor_transform(df_all, df_ann, res_rate, bin_size):
                                   ((0, bin_size - np.shape(dfs)[0]), (0, 0)), 'edge')
             elif np.shape(dfs)[0] >= bin_size:
                 interval = dfs.iloc[:bin_size].fillna(method='ffill').fillna(method='bfill')
-            if not np.isnan(np.array(interval)).any():
-                batch = np.dstack((batch, np.array(interval)))
+            # if not np.isnan(np.array(interval)).any():
+            batch = np.dstack((batch, np.array(interval)))
         batch = batch[:, :, 1:].swapaxes(2, 0).swapaxes(1, 2)  # (197, 11, 59)
         print(("The shape of the batch is " + str(batch.shape)))
         print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
@@ -200,10 +197,8 @@ def model_training(input_tensor, input_targets, df_annotations):
         # Hyperparameters
         test_size = 0.33
         random_state = 88
-
-        train_set, test_set, train_labels, test_labels = train_test_split(input_tensor, labels,
-                                                                          test_size=test_size,
-                                                                          random_state=random_state)
+        print("batch size: " + str(np.shape(input_tensor)) + " labels: " + str(np.shape(labels)))
+        train_set, test_set, train_labels, test_labels = train_test_split(input_tensor, labels, test_size=test_size, random_state=random_state)
         input_tuple = (input_tensor.shape[1], input_tensor.shape[2])  # time-steps, data-dim
         hidden_dim = 128
         verbose, epochs, batch_size = 1, 30, 25
@@ -224,15 +219,11 @@ def model_training(input_tensor, input_targets, df_annotations):
 
         model_history = model.fit(train_set, train_labels, validation_data=(test_set, test_labels), epochs=epochs,
                                   verbose=0)
-        if target=='bodyWeight':
-            np.save('test_set_broken.npy', test_set)  # save
-            np.save('test_labels_broken.npy', test_labels)  # save
 
         # model storing
         store_model(model, 'models/model_' + target + '.h5')
 
         y_prob = model.predict(test_set)
-        # print('Probability:', y_prob)
         test_loss, test_acc = model.evaluate(test_set, test_labels)
         print(('Test accuracy:', test_acc))
         print(('Test loss:', test_loss))
@@ -263,25 +254,16 @@ def load_model(target_name):
 #####################################################
 
 # # read data from session folder
-t0 = time.time()
 sessions = read_zips_from_folder('manual_sessions')
 # get the sensor data and annotation files (if exist)
 sensor_data, annotations = read_data_files(sessions)
-t1 = time.time()
-print(('loading ' + str(len(sessions)) + ' session (s)' + str(t1 - t0)))
 
 # in case of training
-tensor = tensor_transform(sensor_data, annotations, 40, 8)
+tensor = tensor_transform(sensor_data, annotations, 150, 8)
 
-t2 = time.time()
-print(('transforming into tensor (s)' + str(t2 - t1)))
-
-# targets = ['classRate', 'classDepth', 'classRelease']
-targets = ['armsLocked', 'bodyWeight']
+targets = ['classRate', 'classDepth', 'classRelease']
+#targets = ['armsLocked', 'bodyWeight']
 model_training(tensor, targets, annotations)
-t3 = time.time()
-print(('model training (s)' + str(t3 - t2)))
 
 for t in targets:
     model_loaded = load_model(t)
-t4 = time.time()
