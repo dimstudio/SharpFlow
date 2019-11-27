@@ -1,6 +1,6 @@
 # system imports
 import zipfile, os, json, re, datetime, time
-
+import pickle
 # ML imports
 import numpy as np
 # import seaborn as sns
@@ -20,12 +20,10 @@ from sklearn.metrics import roc_auc_score
 import logging
 logging.getLogger('tensorflow').disabled = True
 
-
 ### VARIABLES
 
 # current_time_offset = 1
 to_exclude = ['Ankle', 'Hip', 'Hand']  # variables to exclude
-
 
 #####################################################
 
@@ -39,7 +37,7 @@ def read_zips_from_folder(folder_name):
     return zip_files
 
 
-# function that combines the data across
+# function that combines the data across multiple sessions
 # return: list of files
 def read_data_files(sessions):
     df_all = pd.DataFrame()  # Dataframe with all summarised data
@@ -119,7 +117,6 @@ def sensor_file_to_array(data, offset):
     return df
 
 
-
 # transform an annotation file into a nd-pandas array
 # use this only if using learning-hub format and containing frames
 # IN: sensor-file in json format read into json.load(data)
@@ -146,81 +143,74 @@ def annotation_file_to_array(data, offset):
 
 
 # in case of training tensor_transformation
-def tensor_transform(df_all, df_ann, res_rate, bin_size):
+def tensor_transform(df_all, df_ann, res_rate):
+    if df_ann.empty or df_all.empty:
+        return None
 
-    if (not df_ann.empty) and (not df_all.empty):
-        for el in to_exclude:
-            df_all = df_all[[col for col in df_all.columns if el not in col]]
-        masked_df = [  # mask the dataframe
-            df_all[(df2_start <= df_all.index) & (df_all.index <= df2_end)]
-            for df2_start, df2_end in zip(df_ann['start'], df_ann['end'])
-        ]
-        interval_max = 0
-        for dt in masked_df:
-            delta = np.timedelta64(dt.index[-1] - dt.index[0], 'ms') / np.timedelta64(1, 'ms')
-            if delta > interval_max:
-                interval_max = delta
-        df_resampled = [dt.resample(str(res_rate) + 'ms').first() if not dt.empty else None for dt in masked_df]
+    for el in to_exclude:
+        df_all = df_all[[col for col in df_all.columns if el not in col]]
+    # What is happening here?
+    # Include the data from the annotation times
+    masked_df = [  # mask the dataframe
+        df_all[(df2_start <= df_all.index) & (df_all.index <= df2_end)]
+        for df2_start, df2_end in zip(df_ann['start'], df_ann['end'])
+    ]
+    # What is interval_max for?
+    interval_max = 0
+    for dt in masked_df:
+        delta = np.timedelta64(dt.index[-1] - dt.index[0], 'ms') / np.timedelta64(1, 'ms')
+        if delta > interval_max:
+            interval_max = delta
+    # This results in different length of entries
+    df_resampled = [dt.resample(str(res_rate) + 'ms').first() if not dt.empty else None for dt in masked_df]
 
-        # create a dummy ndarray with same size
-        batch = np.empty([bin_size, np.shape(df_resampled[0])[1]], dtype=float)
-        for dfs in df_resampled:
-            if np.shape(dfs)[0] < bin_size:
-                interval = np.pad(dfs.fillna(method='ffill').fillna(method='bfill'),
-                                  ((0, bin_size - np.shape(dfs)[0]), (0, 0)), 'edge')
-            elif np.shape(dfs)[0] >= bin_size:
-                interval = dfs.iloc[:bin_size].fillna(method='ffill').fillna(method='bfill')
-            # if not np.isnan(np.array(interval)).any():
-            batch = np.dstack((batch, np.array(interval)))
-        batch = batch[:, :, 1:].swapaxes(2, 0).swapaxes(1, 2)  # (197, 11, 59)
-        print(("The shape of the batch is " + str(batch.shape)))
-        print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
-        # Data preprocessing - scaling the attributes
-        # TODO need the scalers for later rescaling
-        scalers = {}
-        for i in range(batch.shape[1]):
-            # Using tanh-activation function --> scale between -1 and 1
-            scalers[i] = preprocessing.MinMaxScaler(feature_range=(-1, 1))
-            batch[:, i, :] = scalers[i].fit_transform(batch[:, i, :])
-        return batch  # tensor
-        # calucate AUC-ROC curve value
-        # def auroc(y_true, y_pred):
-        # return tf.py_func(roc_auc_score, (y_true, y_pred), tf.double)
+    return df_resampled
 
 
-def model_training(input_tensor, input_targets, df_annotations):
-    # Stack the target values
-    modelname = ""
-    for target in input_targets:
-        # print(('Training model on target: ' + target))
-        modelname += target
-    labels = df_annotations[input_targets].values
+# create a dummy ndarray with same size
+def createBatches(df, bin_size):
+    batch = np.empty([bin_size, np.shape(df[0])[1]], dtype=float)
+    for dfs in df:
+        if np.shape(dfs)[0] < bin_size:
+            interval = np.pad(dfs.fillna(method='ffill').fillna(method='bfill'),
+                              ((0, bin_size - np.shape(dfs)[0]), (0, 0)), 'edge')
+        elif np.shape(dfs)[0] >= bin_size:
+            interval = dfs.iloc[:bin_size].fillna(method='ffill').fillna(method='bfill')
+        # if not np.isnan(np.array(interval)).any():
+        batch = np.dstack((batch, np.array(interval)))
+    batch = batch[:, :, 1:].swapaxes(2, 0).swapaxes(1, 2)  # (197, 11, 59)
+    print(("The shape of the batch is " + str(batch.shape)))
+    print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
 
+    return batch  # tensor
+
+
+def model_training(input_tensor, targets, epochs=30, modelname=""):
     # Hyperparameters
     test_size = 0.33
     random_state = 88
-    print("batch size: " + str(np.shape(input_tensor)) + " labels: " + str(np.shape(labels)))
-    train_set, test_set, train_labels, test_labels = train_test_split(input_tensor, labels, test_size=test_size, random_state=random_state)
+    print("batch size: " + str(np.shape(input_tensor)) + " labels: " + str(np.shape(targets)))
+    train_set, test_set, train_labels, test_labels = train_test_split(input_tensor, targets, test_size=test_size, random_state=random_state)
     input_tuple = (input_tensor.shape[1], input_tensor.shape[2])  # time-steps, data-dim
     hidden_dim = 128
-    verbose, epochs, batch_size = 2, 30, 25
+    verbose = 2
     # TODO make outputdim number of targets (and no softmax later on, because no classification)
-    output_dim = len(input_targets)
-    # output_dim = df_annotations[target].nunique()
+    output_dim = targets.shape[1]
     # model definition
     print(('Keras model sequential target: ' + modelname))
     print(f"Output dimension: {output_dim}")
     # TODO Try stacking LSTMs
-    # NOTE when stacking LSTMs zou have to include return_sequences=True
+    # NOTE when stacking LSTMs you have to include return_sequences=True
     model = keras.Sequential([
         keras.layers.LSTM(units=hidden_dim, input_shape=input_tuple, return_sequences=True),
         keras.layers.LSTM(units=hidden_dim//2),
+        keras.layers.Dense(16, activation='tanh'),
         keras.layers.Dense(output_dim, activation='tanh')
     ])
 
     # model compiling
     # TODO change loss to root_mean_squared_error, metrics to MSE
-    model.compile(optimizer=tf.train.AdamOptimizer(),
+    model.compile(optimizer=tf.optimizers.Adam(),
                   loss='mse',
                   metrics=['mse'])
     # model fitting
@@ -264,14 +254,43 @@ def load_model(target_name):
 # # read data from session folder
 sessions = read_zips_from_folder('manual_sessions')
 # get the sensor data and annotation files (if exist)
-sensor_data, annotations = read_data_files(sessions)
+#
+create_pickle = False
+if create_pickle:
+    sensor_data, annotations = read_data_files(sessions)
+    with open("manual_sessions/annotations.pkl", "wb") as f:
+        pickle.dump(annotations, f)
+    with open("manual_sessions/sensor_data.pkl", "wb") as f:
+        pickle.dump(sensor_data, f)
+with open("manual_sessions/annotations.pkl", "rb") as f:
+    annotations = pickle.load(f)
+with open("manual_sessions/sensor_data.pkl", "rb") as f:
+    sensor_data = pickle.load(f)
 
-# in case of training
-tensor = tensor_transform(sensor_data, annotations, 150, 8)
+# include only the revelant classes we are interested in
+targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
+targets = annotations[targetClasses].values
+# TODO "tensor" is not a tensor --> list of datastreams?
+tensor = tensor_transform(sensor_data, annotations, 150)
+# Create batches for training
+tensorBatch = createBatches(tensor, 8)
 
-targets = ['classRate', 'classDepth', 'classRelease']
-#targets = ['armsLocked', 'bodyWeight']
-model_training(tensor, targets, annotations)
+# Data preprocessing - scaling the attributes
+# need the scaler for later rescaling
+# Scale Targets
+targetScaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
+targetScaler.fit(targets)
+targets_scaled = targetScaler.transform(targets)
+# Scale features
+scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
+scaler.fit(tensorBatch.reshape(tensorBatch.shape[0]*tensorBatch.shape[1], tensorBatch.shape[2]))
+tensorScaled = scaler.transform(tensorBatch.reshape(tensorBatch.shape[0]*tensorBatch.shape[1], tensorBatch.shape[2]))
+# Reshape to batches
+tensorScaled = tensorScaled.reshape(tensorBatch.shape[0], tensorBatch.shape[1], tensorBatch.shape[2])
 
-for t in targets:
-    model_loaded = load_model(t)
+
+model_training(tensorScaled, targets_scaled, epochs=120, modelname="_".join(targetClasses))
+
+# need the scaler to rescale for later predictions
+# for t in targetClasses:
+#     model_loaded = load_model(t)
