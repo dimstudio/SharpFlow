@@ -214,9 +214,12 @@ def model_training(input_tensor, targets, epochs=30, modelname=""):
                   loss='mse',
                   metrics=['mse'])
     # model fitting
+    logdir = "logs\\" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    tensorboard_callback = keras.callbacks.TensorBoard(log_dir=logdir)
     model_history = model.fit(train_set, train_labels, validation_data=(test_set, test_labels), epochs=epochs,
-                              verbose=verbose)
+                              verbose=verbose, callbacks=[tensorboard_callback])
 
+    # Start Tensorboard in command line: tensorboard --logdir logs/
     # model storing
     store_model(model, 'models/model_' + modelname + '.h5')
 
