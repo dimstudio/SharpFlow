@@ -34,7 +34,7 @@ def read_zips_from_folder(folder_name):
 
 # function that combines the data across multiple sessions
 # return: list of files
-def read_data_files(sessions):
+def read_data_files(sessions, ignoreKinect=False):
     df_all = pd.DataFrame()  # Dataframe with all summarised data
     df_ann = pd.DataFrame()  # Dataframe containing the annotations
     # for each session in the list of sessions
@@ -48,6 +48,8 @@ def read_data_files(sessions):
             current_time_offset = pd.to_datetime(pd.to_datetime(file_datetime, format='%H:%M:%S.%f'), unit='s')
             # First look for annotation.json
             for filename in z.namelist():
+                if "Kinect" in filename and ignoreKinect:
+                    continue
                 if not os.path.isdir(filename):
                     if '.json' in filename:
                         with z.open(filename) as f:
@@ -63,7 +65,6 @@ def read_data_files(sessions):
                             # Concatenate this dataframe in the dfALL and then sort dfALL by index
                             df_all = pd.concat([df_all, df], ignore_index=False, sort=False).sort_index()
                             df_all = df_all.apply(pd.to_numeric).fillna(method='bfill')
-
     return df_all, df_ann
 
 
@@ -188,9 +189,9 @@ def model_training(input_tensor, targets, epochs=30, modelname=""):
     print("batch size: " + str(np.shape(input_tensor)) + " labels: " + str(np.shape(targets)))
     train_set, test_set, train_labels, test_labels = train_test_split(input_tensor, targets, test_size=test_size, random_state=random_state)
     input_tuple = (input_tensor.shape[1], input_tensor.shape[2])  # time-steps, data-dim
-    hidden_dim = 128
+    hidden_dim = 32
     verbose = 2
-    # TODO make outputdim number of targets (and no softmax later on, because no classification)
+    # make outputdim number of targets (and no softmax later on, because no classification)
     output_dim = targets.shape[1]
     # model definition
     print(('Keras model sequential target: ' + modelname))
@@ -248,13 +249,16 @@ def load_model(target_name):
     return new_model
 
 
-if __name__ == "__main__":
+def train_model():
     #####################################################
     ### VARIABLES
     # current_time_offset = 1
     to_exclude = ['Ankle', 'Hip', 'Hand']  # variables to exclude
     # # read data from session folder
-    folder = 'manual_sessions/CPR'
+    folder = 'manual_sessions/tabletennis_strokes'
+    ignoreKinect = True
+    # targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
+    target_classes = ["correct_stroke"]
     sessions = read_zips_from_folder(folder)
     # get the sensor data and annotation files (if exist)
     if os.path.exists(f"{folder}/annotations.pkl") and os.path.exists(f"{folder}/sensor_data.pkl"):
@@ -263,34 +267,36 @@ if __name__ == "__main__":
         with open(f"{folder}/sensor_data.pkl", "rb") as f:
             sensor_data = pickle.load(f)
     else:
-        sensor_data, annotations = read_data_files(sessions)
+        sensor_data, annotations = read_data_files(sessions, ignoreKinect=ignoreKinect)
         with open(f"{folder}/annotations.pkl", "wb") as f:
             pickle.dump(annotations, f)
         with open(f"{folder}/sensor_data.pkl", "wb") as f:
             pickle.dump(sensor_data, f)
 
     # Check/Remove outliers?
-    # Scale the features
-    scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
-    scaler.fit(sensor_data)
-    sensor_data[sensor_data.columns] = scaler.transform(sensor_data[sensor_data.columns])
-    # include only the relevant classes we are interested in
-    targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
-    targets = annotations[targetClasses].values
-    tensor = tensor_transform(sensor_data, annotations, res_rate=75, to_exclude=to_exclude)
-    median_signal_length = np.median([len(l) for l in tensor])
-    # Create batches for training by using the median signal length
-    tensorBatch = createBatches(tensor, median_signal_length)
-
     # Data preprocessing - scaling the attributes
+    # TODO scaler.fit() should only be done on training set
+    scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
+    sensor_data[sensor_data.columns] = scaler.fit_transform(sensor_data[sensor_data.columns])
+    # include only the relevant classes we are interested in
+    targets = annotations[target_classes].values
     # need the scaler for later rescaling
     # Scale Targets
-    targetScaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
-    targetScaler.fit(targets)
-    targets_scaled = targetScaler.transform(targets)
+    target_scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
+    targets_scaled = target_scaler.fit_transform(targets)
 
-    model_training(tensorBatch, targets_scaled, epochs=120, modelname="_".join(targetClasses))
+    tensor = tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
+    median_signal_length = int(np.median([len(l) for l in tensor]))
+    print(f"Median signal length: {median_signal_length}")
+    # Create batches for training by using the median signal length
+    tensor_batch = createBatches(tensor, median_signal_length)
+
+    # TODO shuffle batches (is done by keras already?)
+    model_training(tensor_batch, targets_scaled, epochs=120, modelname="_".join(target_classes))
 
     # need the scaler to rescale for later predictions
-    # for t in targetClasses:
-    #     model_loaded = load_model(t)
+
+
+if __name__ == "__main__":
+    train_model()
+    # test_model("correct_stroke")
