@@ -20,11 +20,6 @@ from sklearn.metrics import roc_auc_score
 import logging
 logging.getLogger('tensorflow').disabled = True
 
-### VARIABLES
-
-# current_time_offset = 1
-to_exclude = ['Ankle', 'Hip', 'Hand']  # variables to exclude
-
 #####################################################
 
 # FUNCTIONS
@@ -143,12 +138,13 @@ def annotation_file_to_array(data, offset):
 
 
 # in case of training tensor_transformation
-def tensor_transform(df_all, df_ann, res_rate):
+def tensor_transform(df_all, df_ann, res_rate, to_exclude=None):
     if df_ann.empty or df_all.empty:
         return None
 
-    for el in to_exclude:
-        df_all = df_all[[col for col in df_all.columns if el not in col]]
+    if to_exclude is not None:
+        for el in to_exclude:
+            df_all = df_all[[col for col in df_all.columns if el not in col]]
     # What is happening here?
     # Include the data from the annotation times
     masked_df = [  # mask the dataframe
@@ -223,7 +219,7 @@ def model_training(input_tensor, targets, epochs=30, modelname=""):
     # model storing
     store_model(model, 'models/model_' + modelname + '.h5')
 
-    y_prob = model.predict(test_set)
+    # y_prob = model.predict(test_set)
     test_loss, test_acc = model.evaluate(test_set, test_labels)
     print(('Test accuracy:', test_acc))
     print(('Test loss:', test_loss))
@@ -252,48 +248,49 @@ def load_model(target_name):
     return new_model
 
 
-#####################################################
+if __name__ == "__main__":
+    #####################################################
+    ### VARIABLES
+    # current_time_offset = 1
+    to_exclude = ['Ankle', 'Hip', 'Hand']  # variables to exclude
+    # # read data from session folder
+    folder = 'manual_sessions/CPR'
+    sessions = read_zips_from_folder(folder)
+    # get the sensor data and annotation files (if exist)
+    if os.path.exists(f"{folder}/annotations.pkl") and os.path.exists(f"{folder}/sensor_data.pkl"):
+        with open(f"{folder}/annotations.pkl", "rb") as f:
+            annotations = pickle.load(f)
+        with open(f"{folder}/sensor_data.pkl", "rb") as f:
+            sensor_data = pickle.load(f)
+    else:
+        sensor_data, annotations = read_data_files(sessions)
+        with open(f"{folder}/annotations.pkl", "wb") as f:
+            pickle.dump(annotations, f)
+        with open(f"{folder}/sensor_data.pkl", "wb") as f:
+            pickle.dump(sensor_data, f)
 
-# # read data from session folder
-sessions = read_zips_from_folder('manual_sessions')
-# get the sensor data and annotation files (if exist)
-#
-create_pickle = False
-if create_pickle:
-    sensor_data, annotations = read_data_files(sessions)
-    with open("manual_sessions/annotations.pkl", "wb") as f:
-        pickle.dump(annotations, f)
-    with open("manual_sessions/sensor_data.pkl", "wb") as f:
-        pickle.dump(sensor_data, f)
-with open("manual_sessions/annotations.pkl", "rb") as f:
-    annotations = pickle.load(f)
-with open("manual_sessions/sensor_data.pkl", "rb") as f:
-    sensor_data = pickle.load(f)
+    # Check/Remove outliers?
+    # Scale the features
+    scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
+    scaler.fit(sensor_data)
+    sensor_data[sensor_data.columns] = scaler.transform(sensor_data[sensor_data.columns])
+    # include only the relevant classes we are interested in
+    targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
+    targets = annotations[targetClasses].values
+    tensor = tensor_transform(sensor_data, annotations, res_rate=75, to_exclude=to_exclude)
+    median_signal_length = np.median([len(l) for l in tensor])
+    # Create batches for training by using the median signal length
+    tensorBatch = createBatches(tensor, median_signal_length)
 
-# include only the revelant classes we are interested in
-targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
-targets = annotations[targetClasses].values
-# TODO "tensor" is not a tensor --> list of datastreams?
-tensor = tensor_transform(sensor_data, annotations, 150)
-# Create batches for training
-tensorBatch = createBatches(tensor, 8)
+    # Data preprocessing - scaling the attributes
+    # need the scaler for later rescaling
+    # Scale Targets
+    targetScaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
+    targetScaler.fit(targets)
+    targets_scaled = targetScaler.transform(targets)
 
-# Data preprocessing - scaling the attributes
-# need the scaler for later rescaling
-# Scale Targets
-targetScaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
-targetScaler.fit(targets)
-targets_scaled = targetScaler.transform(targets)
-# Scale features
-scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
-scaler.fit(tensorBatch.reshape(tensorBatch.shape[0]*tensorBatch.shape[1], tensorBatch.shape[2]))
-tensorScaled = scaler.transform(tensorBatch.reshape(tensorBatch.shape[0]*tensorBatch.shape[1], tensorBatch.shape[2]))
-# Reshape to batches
-tensorScaled = tensorScaled.reshape(tensorBatch.shape[0], tensorBatch.shape[1], tensorBatch.shape[2])
+    model_training(tensorBatch, targets_scaled, epochs=120, modelname="_".join(targetClasses))
 
-
-model_training(tensorScaled, targets_scaled, epochs=120, modelname="_".join(targetClasses))
-
-# need the scaler to rescale for later predictions
-# for t in targetClasses:
-#     model_loaded = load_model(t)
+    # need the scaler to rescale for later predictions
+    # for t in targetClasses:
+    #     model_loaded = load_model(t)
