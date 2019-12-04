@@ -109,9 +109,10 @@ def main():
     # Data preprocessing - scaling the attributes
     # scaler.fit() should only be done on training set and then applied to the test set
     scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
+    scaler.fit(train_set.reshape(train_set.shape[0] * train_set.shape[1], train_set.shape[2])).reshape(train_set.shape[0], train_set.shape[1], train_set.shape[2])
     # Reshape sequences
-    train_set = scaler.fit_transform(train_set.reshape(train_set.shape[0] * train_set.shape[1], train_set.shape[2])).reshape(train_set.shape[0], train_set.shape[1], train_set.shape[2])
-    test_set = scaler.fit_transform(test_set.reshape(test_set.shape[0] * test_set.shape[1], test_set.shape[2])).reshape(test_set.shape[0], test_set.shape[1], test_set.shape[2])
+    train_set = scaler.transform(train_set.reshape(train_set.shape[0] * train_set.shape[1], train_set.shape[2])).reshape(train_set.shape[0], train_set.shape[1], train_set.shape[2])
+    test_set = scaler.transform(test_set.reshape(test_set.shape[0] * test_set.shape[1], test_set.shape[2])).reshape(test_set.shape[0], test_set.shape[1], test_set.shape[2])
 
     ### Train model
     modelname = "_".join(target_classes)
