@@ -4,6 +4,7 @@ import pandas as pd
 from pandas.io.json import json_normalize
 import pickle
 
+
 # FUNCTIONS
 # function that reads the input session in zip format
 # # return: list of files
