@@ -24,7 +24,7 @@ logging.getLogger('tensorflow').disabled = True
 ### VARIABLES
 
 # current_time_offset = 1
-to_exclude = ['Ankle', 'Hip', 'Hand']  # variables to exclude
+to_exclude = ['Ankle', 'Hip']  # variables to exclude
 
 
 #####################################################
@@ -63,11 +63,9 @@ def read_data_files(sessions):
                             df = annotation_file_to_array(data, current_time_offset)
                             df_ann = df_ann.append(df)
                         elif 'frames' in data:
-                            sensor_file_start_loading = time.time()
                             df = sensor_file_to_array(data, current_time_offset)
-                            sensor_file_stop_loading = time.time()
-                            #print(('Sensor file loading  ' + str(sensor_file_stop_loading - sensor_file_start_loading)))
                             # Concatenate this dataframe in the dfALL and then sort dfALL by index
+                            #print(df)
                             df_all = pd.concat([df_all, df], ignore_index=False, sort=False).sort_index()
                             df_all = df_all.apply(pd.to_numeric).fillna(method='bfill')
 
@@ -113,8 +111,10 @@ def sensor_file_to_array(data, offset):
     # The application KienctReader can track up to 6 people, whose attributes are
     # 1ShoulderLeftX or 3AnkleRightY. We get rid of this numbers assuming there is only 1 user
     # This part has to be rethought in case of 2 users
+    df = df[df.nunique().sort_values(ascending=False).index]
     df.rename(columns=lambda x: re.sub('KinectReader.\d', 'KinectReader.', x), inplace=True)
     df.rename(columns=lambda x: re.sub('Kinect.\d', 'Kinect.', x), inplace=True)
+    df = df.loc[:, ~df.columns.duplicated()]
 
     return df
 
@@ -199,6 +199,7 @@ def model_training(input_tensor, input_targets, df_annotations):
         random_state = 88
         print("batch size: " + str(np.shape(input_tensor)) + " labels: " + str(np.shape(labels)))
         train_set, test_set, train_labels, test_labels = train_test_split(input_tensor, labels, test_size=test_size, random_state=random_state)
+        valid_set, test_set, valid_labels, test_labels = train_test_split(test_set, test_labels, test_size=0.5, random_state=random_state)
         input_tuple = (input_tensor.shape[1], input_tensor.shape[2])  # time-steps, data-dim
         hidden_dim = 128
         verbose, epochs, batch_size = 1, 30, 25
@@ -207,7 +208,7 @@ def model_training(input_tensor, input_targets, df_annotations):
         print(('Keras model sequential target: ' + target))
         model = keras.Sequential([
             keras.layers.LSTM(hidden_dim, input_shape=input_tuple),
-            keras.layers.Dense(output_dim, activation='softmax')
+            keras.layers.Dense(output_dim, activation='sigmoid')
         ])
 
         # model compiling
@@ -217,7 +218,7 @@ def model_training(input_tensor, input_targets, df_annotations):
         # model fitting
 
 
-        model_history = model.fit(train_set, train_labels, validation_data=(test_set, test_labels), epochs=epochs,
+        model_history = model.fit(train_set, train_labels, validation_data=(valid_set, valid_labels), epochs=epochs,
                                   verbose=0)
 
         # model storing
@@ -252,18 +253,20 @@ def load_model(target_name):
 
 
 #####################################################
+if __name__ == "__main__":
+    # # read data from session folder
+    sessions = read_zips_from_folder('pingpong')
+    # get the sensor data and annotation files (if exist)
+    sensor_data, annotations = read_data_files(sessions)
 
-# # read data from session folder
-sessions = read_zips_from_folder('manual_sessions')
-# get the sensor data and annotation files (if exist)
-sensor_data, annotations = read_data_files(sessions)
+    # in case of training
+    tensor = tensor_transform(sensor_data, annotations, 25, 50)
 
-# in case of training
-tensor = tensor_transform(sensor_data, annotations, 150, 8)
+    targets = ['classRate', 'classDepth', 'classRelease']
+    #targets = ['armsLocked', 'bodyWeight']
+    targets = ['correct_stroke']
 
-targets = ['classRate', 'classDepth', 'classRelease']
-#targets = ['armsLocked', 'bodyWeight']
-model_training(tensor, targets, annotations)
+    model_training(tensor, targets, annotations)
 
-for t in targets:
-    model_loaded = load_model(t)
+    for t in targets:
+        model_loaded = load_model(t)
