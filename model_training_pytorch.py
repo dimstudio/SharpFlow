@@ -41,11 +41,14 @@ def fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every: int = Non
                 *[loss_batch(model, loss_func, xb, yb) for xb, yb in valid_dl]
             )
         val_loss = np.sum(np.multiply(losses, nums)) / np.sum(nums)
-
-        print(f"Epoch: {epoch:5d}, Time: {(time.time()-start_time)/60:.3f} min, Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}")
+        acc, prec, recall = acc_prec_rec(model, valid_dl)
+        print(f"Epoch: {epoch:5d}, Time: {(time.time()-start_time)/60:.3f} min, Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}, Accuracy: {acc:.5f}, Precision: {prec:.5f}, Recall: {recall:.5f}")
         # add to tensorboard
         writer.add_scalar('Loss/train', train_loss, epoch)
         writer.add_scalar('Loss/val', val_loss, epoch)
+        writer.add_scalar('Metrics/accuracy', acc, epoch)
+        writer.add_scalar('Metrics/precision', prec, epoch)
+        writer.add_scalar('Metrics/recall', recall, epoch)
         if save_every is not None:
             if epoch % save_every == 0:
                 # save model
@@ -72,6 +75,23 @@ class WrappedDataLoader:
             yield (self.func(*b))
 
 
+class MySmallLSTM(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super(MySmallLSTM, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+
+        self.lstm = nn.LSTM(input_size=self.input_size, hidden_size=self.hidden_size, num_layers=1, batch_first=True)
+        self.lin = nn.Linear(in_features=self.hidden_size, out_features=output_size)
+
+    def forward(self, x):
+        out, state = self.lstm(x)
+        out = self.lin(out[:, -1, :])
+        out = torch.sigmoid(out)
+        return out
+
+
 class MyLSTM(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super(MyLSTM, self).__init__()
@@ -81,32 +101,22 @@ class MyLSTM(nn.Module):
 
         self.lstm1 = nn.LSTM(input_size=self.input_size, hidden_size=self.hidden_size, num_layers=1, batch_first=True)
         self.lstm2 = nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size//2, num_layers=1, batch_first=True)
-        self.lin1 = nn.Linear(in_features=64, out_features=32)
-        self.lin2 = nn.Linear(in_features=32, out_features=self.output_size)
+        self.lin1 = nn.Linear(in_features=self.hidden_size//2, out_features=self.hidden_size//4)
+        self.lin2 = nn.Linear(in_features=self.hidden_size//4, out_features=self.output_size)
 
     def forward(self, x):
         out, state = self.lstm1(x)
         out, state = self.lstm2(out)
         # Only take the last state of the second LSTM
         out = self.lin1(out[:, -1, :])
-        out = nn.Sigmoid()(out)
+        out = torch.sigmoid(out)
         out = self.lin2(out)
-        out = nn.Sigmoid()(out)
+        out = torch.sigmoid(out)
         return out
 
 
-def train_model():
-    dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    # dev = "cpu"
-    print(f"Device: {dev}")
-
-    to_exclude = ['Ankle', 'Hip', 'Hand']  # variables to exclude
-    ### Read Data
-    # read data from session folder
-    folder = 'manual_sessions/tabletennis_strokes'
-    ignoreKinect = True
-    # targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
-    target_classes = ["correct_stroke"]
+def get_data(folder, target_classes, to_exclude=None, ignoreKinect=False, dev="cpu", seed=1337):
+    # np.random.seed(seed)
     sensor_data, annotations = data_helper.get_data_from_files(folder, ignoreKinect=ignoreKinect)
     ### Create tensor from files
     tensor = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
@@ -135,13 +145,17 @@ def train_model():
     scaler.fit(x_train.reshape(x_train.shape[0] * x_train.shape[1], x_train.shape[2]))
     # Reshape sequences
     x_train = scaler.transform(x_train.reshape(x_train.shape[0] * x_train.shape[1], x_train.shape[2])).reshape(
-                                                                                                x_train.shape[0],
-                                                                                                x_train.shape[1],
-                                                                                                x_train.shape[2])
+        x_train.shape[0],
+        x_train.shape[1],
+        x_train.shape[2])
     x_valid = scaler.transform(x_valid.reshape(x_valid.shape[0] * x_valid.shape[1], x_valid.shape[2])).reshape(
-                                                                                                x_valid.shape[0],
-                                                                                                x_valid.shape[1],
-                                                                                                x_valid.shape[2])
+        x_valid.shape[0],
+        x_valid.shape[1],
+        x_valid.shape[2])
+    x_test = scaler.transform(x_test.reshape(x_test.shape[0] * x_test.shape[1], x_test.shape[2])).reshape(
+        x_test.shape[0],
+        x_test.shape[1],
+        x_test.shape[2])
 
     x_train, y_train, x_valid, y_valid, x_test, y_test = map(
         torch.tensor, (x_train, y_train, x_valid, y_valid, x_test, y_test)
@@ -159,31 +173,103 @@ def train_model():
 
     def putOnGPU(x, y):
         return x.to(dev), y.to(dev)
+
     train_dl = WrappedDataLoader(train_dl, putOnGPU)
     valid_dl = WrappedDataLoader(valid_dl, putOnGPU)
     test_dl = WrappedDataLoader(test_dl, putOnGPU)
+    return train_dl, valid_dl, test_dl, x_train.shape[-1]
 
+
+def train_model():
+    dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    # dev = "cpu"
+    print(f"Device: {dev}")
+
+    to_exclude = ['Ankle', 'Hip']  # variables to exclude
+    ### Read Data
+    # read data from session folder
+    folder = 'manual_sessions/tabletennis_strokes'
+    ignoreKinect = True
+    # targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
+    target_classes = ["correct_stroke"]
+    train_dl, valid_dl, test_dl, data_dim = get_data(folder=folder,
+                                                     target_classes=target_classes,
+                                                     to_exclude=to_exclude,
+                                                     ignoreKinect=ignoreKinect,
+                                                     dev=dev)
     # Input shape should be (batch_size, sequence_length, input_dimension)
 
     # Define model (done in function)
-    lr = 0.001
-
-    model = MyLSTM(6, 128, 1)
-    # Put the model on GPU
+    lr = 0.01
+    classes = 1
+    hidden_units = 128
+    model = MySmallLSTM(data_dim, hidden_units, classes)
+    # Put the model on GPU if available
     model.to(dev)
     # Define optimizer
-    opt = optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+    opt = optim.Adam(model.parameters(), lr=lr)
     # Loss function
-    loss_func = F.mse_loss
+    loss_func = F.binary_cross_entropy
     # Training
-    epochs = 120
+    epochs = 100
+    model.train()
     fit(epochs, model, loss_func, opt, train_dl, valid_dl)
     # Save model
     torch.save({'state_dict': model.state_dict()}, "models/lstm.pt")
     # Calculate accuracy
-    # acc = accuracy(model, test_dl)
-    # # len of dataloader depends on batchsize
-    # print(f'Accuracy of the network on the {len(test_ds)} test images: {acc}%')
+    acc, precision, recall = acc_prec_rec(model, test_dl)
+    print(f"### Test set ### Accuracy: {acc:.5f} Precision: {precision:.5f} Recall: {recall:.5f}")
+
+
+def acc_prec_rec(model, test_dl):
+    # Accuracy for binary classification
+    model.eval()
+    with torch.no_grad():
+        total_tp, total_tn, total_fp, total_fn = 0, 0, 0, 0
+        for xb, yb in test_dl:
+            ypred = model(xb)
+            ypred_thresh = ypred.numpy() > 0.5
+            total_tp += np.sum((ypred_thresh == 1) * (ypred_thresh == yb.numpy()))
+            total_tn += np.sum((ypred_thresh == 0) * (ypred_thresh == yb.numpy()))
+            total_fp += np.sum((ypred_thresh == 1) * (ypred_thresh != yb.numpy()))
+            total_fn += np.sum((ypred_thresh == 0) * (ypred_thresh != yb.numpy()))
+        acc = (total_tp+total_tn)/(total_tp+total_tn+total_fn+total_fp)
+        if total_tp+total_fp == 0:
+            prec = 0
+        else:
+            prec = total_tp/(total_tp+total_fp)
+        recall = total_tp/(total_tp+total_fn)
+        return acc, prec, recall
+
+
+def test_model(path_to_model):
+    dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    # dev = "cpu"
+    print(f"Device: {dev}")
+
+    to_exclude = ['Ankle', 'Hip']  # variables to exclude
+    ### Read Data
+    # read data from session folder
+    folder = 'manual_sessions/tabletennis_strokes'
+    ignoreKinect = False
+    # targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
+    target_classes = ["correct_stroke"]
+    train_dl, valid_dl, test_dl, data_dim = get_data(folder=folder,
+                                                     target_classes=target_classes,
+                                                     to_exclude=to_exclude,
+                                                     ignoreKinect=ignoreKinect,
+                                                     dev=dev)
+    # Input shape should be (batch_size, sequence_length, input_dimension)
+
+    # Define model (done in function)
+    classes = 1
+    hidden_units = 128
+    model = MySmallLSTM(data_dim, hidden_units, classes)
+    model.load_state_dict(torch.load(path_to_model)["state_dict"])
+    model.eval()
+    # Test model with test data (fed in batches)
+    acc, precision, recall = acc_prec_rec(model, test_dl)
+    print(f"Accuracy: {acc:.5f} Precision: {precision:.5f} Recall: {recall:.5f}")
 
 
 if __name__ == "__main__":

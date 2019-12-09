@@ -46,6 +46,7 @@ def read_data_files(sessions, ignoreKinect=False):
                             sensor_file_stop_loading = time.time()
                             #print(('Sensor file loading  ' + str(sensor_file_stop_loading - sensor_file_start_loading)))
                             # Concatenate this dataframe in the dfALL and then sort dfALL by index
+                            df = df.loc[:, ~df.columns.duplicated()] # TODO THIS IS JUST A WORKAROUND TO MAKE IT WORK FOR KINECT DATA
                             df_all = pd.concat([df_all, df], ignore_index=False, sort=False).sort_index()
                             df_all = df_all.apply(pd.to_numeric).fillna(method='bfill')
     return df_all, df_ann
@@ -90,8 +91,10 @@ def sensor_file_to_array(data, offset):
     # The application KienctReader can track up to 6 people, whose attributes are
     # 1ShoulderLeftX or 3AnkleRightY. We get rid of this numbers assuming there is only 1 user
     # This part has to be rethought in case of 2 users
+    df = df[df.nunique().sort_values(ascending=False).index]
     df.rename(columns=lambda x: re.sub('KinectReader.\d', 'KinectReader.', x), inplace=True)
     df.rename(columns=lambda x: re.sub('Kinect.\d', 'Kinect.', x), inplace=True)
+    df = df.loc[:, ~df.columns.duplicated()]
 
     return df
 
@@ -171,15 +174,17 @@ def create_batches(df, bin_size):
 def get_data_from_files(folder, ignoreKinect=False):
     sessions = read_zips_from_folder(folder)
     # get the sensor data and annotation files (if exist)
-    if os.path.exists(f"{folder}/annotations.pkl") and os.path.exists(f"{folder}/sensor_data.pkl"):
-        with open(f"{folder}/annotations.pkl", "rb") as f:
+    ann_name = f"{folder}/annotations_ignoreKinect_{ignoreKinect}.pkl"
+    sensor_name = f"{folder}/sensor_data_ignoreKinect_{ignoreKinect}.pkl"
+    if os.path.exists(ann_name) and os.path.exists(sensor_name):
+        with open(ann_name, "rb") as f:
             annotations = pickle.load(f)
-        with open(f"{folder}/sensor_data.pkl", "rb") as f:
+        with open(sensor_name, "rb") as f:
             sensor_data = pickle.load(f)
     else:
         sensor_data, annotations = read_data_files(sessions, ignoreKinect=ignoreKinect)
-        with open(f"{folder}/annotations.pkl", "wb") as f:
+        with open(ann_name, "wb") as f:
             pickle.dump(annotations, f)
-        with open(f"{folder}/sensor_data.pkl", "wb") as f:
+        with open(sensor_name, "wb") as f:
             pickle.dump(sensor_data, f)
     return sensor_data, annotations
