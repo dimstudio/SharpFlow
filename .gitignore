@@ -138,3 +138,10 @@ dfall.csv
 myfig.png
 test_labels_broken.npy
 test_set_broken.npy
+
+/manual_sessions
+/manual_sessions/cpr_test
+
+/logs
+/runs
+
