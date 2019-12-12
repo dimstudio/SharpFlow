@@ -17,7 +17,7 @@ def read_zips_from_folder(folder_name):
 
 # function that combines the data across multiple sessions
 # return: list of files
-def read_data_files(sessions, ignoreKinect=False):
+def read_data_files(sessions, ignore_files=None):
     df_all = pd.DataFrame()  # Dataframe with all summarised data
     df_ann = pd.DataFrame()  # Dataframe containing the annotations
     # for each session in the list of sessions
@@ -31,8 +31,11 @@ def read_data_files(sessions, ignoreKinect=False):
             current_time_offset = pd.to_datetime(pd.to_datetime(file_datetime, format='%H:%M:%S.%f'), unit='s')
             # First look for annotation.json
             for filename in z.namelist():
-                if "Kinect" in filename and ignoreKinect:
-                    continue
+                # check whether the current file is in files to ignore
+                if ignore_files is not None:
+                    skip = sum([ign_f.lower() in filename.lower() for ign_f in ignore_files]) > 0
+                    if skip:
+                        continue
                 if not os.path.isdir(filename):
                     if '.json' in filename:
                         with z.open(filename) as f:
@@ -46,7 +49,6 @@ def read_data_files(sessions, ignoreKinect=False):
                             sensor_file_stop_loading = time.time()
                             #print(('Sensor file loading  ' + str(sensor_file_stop_loading - sensor_file_start_loading)))
                             # Concatenate this dataframe in the dfALL and then sort dfALL by index
-                            df = df.loc[:, ~df.columns.duplicated()] # TODO THIS IS JUST A WORKAROUND TO MAKE IT WORK FOR KINECT DATA
                             df_all = pd.concat([df_all, df], ignore_index=False, sort=False).sort_index()
                             df_all = df_all.apply(pd.to_numeric).fillna(method='bfill')
     return df_all, df_ann
@@ -171,18 +173,23 @@ def create_batches(df, bin_size):
     return batch  # tensor
 
 
-def get_data_from_files(folder, ignoreKinect=False):
+def get_data_from_files(folder, ignore_files=None):
     sessions = read_zips_from_folder(folder)
     # get the sensor data and annotation files (if exist)
-    ann_name = f"{folder}/annotations_ignoreKinect_{ignoreKinect}.pkl"
-    sensor_name = f"{folder}/sensor_data_ignoreKinect_{ignoreKinect}.pkl"
+    if ignore_files is None:
+        ann_name = f"{folder}/annotations.pkl"
+        sensor_name = f"{folder}/sensor_data.pkl"
+    else:
+        ann_name = f"{folder}/annotations_ignorefiles{'_'.join(ignore_files)}.pkl"
+        sensor_name = f"{folder}/sensor_data_ignorefiles{'_'.join(ignore_files)}.pkl"
+
     if os.path.exists(ann_name) and os.path.exists(sensor_name):
         with open(ann_name, "rb") as f:
             annotations = pickle.load(f)
         with open(sensor_name, "rb") as f:
             sensor_data = pickle.load(f)
     else:
-        sensor_data, annotations = read_data_files(sessions, ignoreKinect=ignoreKinect)
+        sensor_data, annotations = read_data_files(sessions, ignore_files=ignore_files)
         with open(ann_name, "wb") as f:
             pickle.dump(annotations, f)
         with open(sensor_name, "wb") as f:

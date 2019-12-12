@@ -40,10 +40,10 @@ def main():
     ### Read Data
     # read data from session folder
     folder = 'manual_sessions/tabletennis_strokes'
-    ignoreKinect = True
+    ignore_files = ["kinect"]
     # targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
     target_classes = ["correct_stroke"]
-    sensor_data, annotations = data_helper.get_data_from_files(folder, ignoreKinect=ignoreKinect)
+    sensor_data, annotations = data_helper.get_data_from_files(folder, ignore_files=ignore_files)
     ### Create tensor from files
     tensor = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
     # include only the relevant classes we are interested in

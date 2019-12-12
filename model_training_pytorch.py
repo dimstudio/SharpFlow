@@ -115,9 +115,9 @@ class MyLSTM(nn.Module):
         return out
 
 
-def get_data(folder, target_classes, to_exclude=None, ignoreKinect=False, dev="cpu", seed=1337):
+def get_data(folder, target_classes, to_exclude=None, ignore_files=None, dev="cpu", seed=1337):
     # np.random.seed(seed)
-    sensor_data, annotations = data_helper.get_data_from_files(folder, ignoreKinect=ignoreKinect)
+    sensor_data, annotations = data_helper.get_data_from_files(folder, ignore_files=ignore_files)
     ### Create tensor from files
     tensor = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
     # include only the relevant classes we are interested in
@@ -189,13 +189,13 @@ def train_model():
     ### Read Data
     # read data from session folder
     folder = 'manual_sessions/tabletennis_strokes'
-    ignoreKinect = True
+    ignore_files = ["kinect"]
     # targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
     target_classes = ["correct_stroke"]
     train_dl, valid_dl, test_dl, data_dim = get_data(folder=folder,
                                                      target_classes=target_classes,
                                                      to_exclude=to_exclude,
-                                                     ignoreKinect=ignoreKinect,
+                                                     ignore_files=ignore_files,
                                                      dev=dev)
     # Input shape should be (batch_size, sequence_length, input_dimension)
 
@@ -203,7 +203,7 @@ def train_model():
     lr = 0.01
     classes = 1
     hidden_units = 128
-    model = MySmallLSTM(data_dim, hidden_units, classes)
+    model = MyLSTM(data_dim, hidden_units, classes)
     # Put the model on GPU if available
     model.to(dev)
     # Define optimizer
@@ -212,7 +212,6 @@ def train_model():
     loss_func = F.binary_cross_entropy
     # Training
     epochs = 100
-    model.train()
     fit(epochs, model, loss_func, opt, train_dl, valid_dl)
     # Save model
     torch.save({'state_dict': model.state_dict()}, "models/lstm.pt")
@@ -225,14 +224,14 @@ def acc_prec_rec(model, test_dl):
     # Accuracy for binary classification
     model.eval()
     with torch.no_grad():
-        total_tp, total_tn, total_fp, total_fn = 0, 0, 0, 0
+        total_tp, total_tn, total_fp, total_fn = 0.0, 0.0, 0.0, 0.0
         for xb, yb in test_dl:
             ypred = model(xb)
-            ypred_thresh = ypred.numpy() > 0.5
-            total_tp += np.sum((ypred_thresh == 1) * (ypred_thresh == yb.numpy()))
-            total_tn += np.sum((ypred_thresh == 0) * (ypred_thresh == yb.numpy()))
-            total_fp += np.sum((ypred_thresh == 1) * (ypred_thresh != yb.numpy()))
-            total_fn += np.sum((ypred_thresh == 0) * (ypred_thresh != yb.numpy()))
+            ypred_thresh = ypred > 0.5
+            total_tp += torch.sum((ypred_thresh == 1) * (ypred_thresh == yb))
+            total_tn += torch.sum((ypred_thresh == 0) * (ypred_thresh == yb))
+            total_fp += torch.sum((ypred_thresh == 1) * (ypred_thresh != yb))
+            total_fn += torch.sum((ypred_thresh == 0) * (ypred_thresh != yb))
         acc = (total_tp+total_tn)/(total_tp+total_tn+total_fn+total_fp)
         if total_tp+total_fp == 0:
             prec = 0
@@ -251,13 +250,13 @@ def test_model(path_to_model):
     ### Read Data
     # read data from session folder
     folder = 'manual_sessions/tabletennis_strokes'
-    ignoreKinect = False
+    ignore_files = None
     # targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
     target_classes = ["correct_stroke"]
     train_dl, valid_dl, test_dl, data_dim = get_data(folder=folder,
                                                      target_classes=target_classes,
                                                      to_exclude=to_exclude,
-                                                     ignoreKinect=ignoreKinect,
+                                                     ignore_files=ignore_files,
                                                      dev=dev)
     # Input shape should be (batch_size, sequence_length, input_dimension)
 
