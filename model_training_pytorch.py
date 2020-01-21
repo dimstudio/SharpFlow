@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import time
 import data_helper
+import joblib
 
 
 def loss_batch(model, loss_func, xb, yb, opt=None):
@@ -145,6 +146,7 @@ def get_data(folder, target_classes, to_exclude=None, ignore_files=None, dev="cp
     # Pay attention to the range of your activation function! (Tanh --> [-1,1], Sigmoid --> [0,1])
     scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
     scaler.fit(x_train.reshape(x_train.shape[0] * x_train.shape[1], x_train.shape[2]))
+    joblib.dump(scaler, "models/scaler.pkl")
     # Reshape sequences
     x_train = scaler.transform(x_train.reshape(x_train.shape[0] * x_train.shape[1], x_train.shape[2])).reshape(
         x_train.shape[0],
