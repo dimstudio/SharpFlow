@@ -22,8 +22,9 @@ def loss_batch(model, loss_func, xb, yb, opt=None):
     return loss.item(), len(xb)
 
 
-def fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every: int = None):
-    writer = SummaryWriter()
+def fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every: int = None, tensorboard: bool = False):
+    if tensorboard:
+        writer = SummaryWriter()
     start_time = time.time()
     for epoch in range(epochs):
         model.train()
@@ -44,11 +45,12 @@ def fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every: int = Non
         acc, prec, recall = acc_prec_rec(model, valid_dl)
         print(f"Epoch: {epoch:5d}, Time: {(time.time()-start_time)/60:.3f} min, Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}, Accuracy: {acc:.5f}, Precision: {prec:.5f}, Recall: {recall:.5f}")
         # add to tensorboard
-        writer.add_scalar('Loss/train', train_loss, epoch)
-        writer.add_scalar('Loss/val', val_loss, epoch)
-        writer.add_scalar('Metrics/accuracy', acc, epoch)
-        writer.add_scalar('Metrics/precision', prec, epoch)
-        writer.add_scalar('Metrics/recall', recall, epoch)
+        if tensorboard:
+            writer.add_scalar('Loss/train', train_loss, epoch)
+            writer.add_scalar('Loss/val', val_loss, epoch)
+            writer.add_scalar('Metrics/accuracy', acc, epoch)
+            writer.add_scalar('Metrics/precision', prec, epoch)
+            writer.add_scalar('Metrics/recall', recall, epoch)
         if save_every is not None:
             if epoch % save_every == 0:
                 # save model
@@ -188,10 +190,12 @@ def train_model():
     to_exclude = ['Ankle', 'Hip']  # variables to exclude
     ### Read Data
     # read data from session folder
-    folder = 'manual_sessions/tabletennis_strokes'
-    ignore_files = ["kinect"]
-    # targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
-    target_classes = ["correct_stroke"]
+    ignore_files = None  # ["kinect"]
+    # folder = 'manual_sessions/tabletennis_strokes'
+    # target_classes = ["correct_stroke"]
+    folder = 'manual_sessions/cpr_experiment'
+    target_classes = ['classRate', 'classDepth', 'classRelease']
+
     train_dl, valid_dl, test_dl, data_dim = get_data(folder=folder,
                                                      target_classes=target_classes,
                                                      to_exclude=to_exclude,
@@ -201,7 +205,7 @@ def train_model():
 
     # Define model (done in function)
     lr = 0.01
-    classes = 1
+    classes = len(target_classes)
     hidden_units = 128
     model = MyLSTM(data_dim, hidden_units, classes)
     # Put the model on GPU if available
@@ -209,10 +213,11 @@ def train_model():
     # Define optimizer
     opt = optim.Adam(model.parameters(), lr=lr)
     # Loss function
-    loss_func = F.binary_cross_entropy
+    # loss_func = F.binary_cross_entropy  # use this loss only when class is binary
+    loss_func = F.mse_loss
     # Training
     epochs = 100
-    fit(epochs, model, loss_func, opt, train_dl, valid_dl)
+    fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every=None, tensorboard=False)
     # Save model
     torch.save({'state_dict': model.state_dict()}, "models/lstm.pt")
     # Calculate accuracy
