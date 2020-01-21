@@ -12,7 +12,7 @@ from sklearn import preprocessing
 from sklearn.model_selection import train_test_split
 import logging
 logging.getLogger('tensorflow').disabled = True
-
+import joblib
 
 #####################################################
 
@@ -40,8 +40,9 @@ def main():
     ### Read Data
     # read data from session folder
     folder = 'manual_sessions/tabletennis_strokes'
+    dataset = folder.split("/")[1]
     ignore_files = ["kinect"]
-    # targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
+    # target_classes = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
     target_classes = ["correct_stroke"]
     sensor_data, annotations = data_helper.get_data_from_files(folder, ignore_files=ignore_files)
     ### Create tensor from files
@@ -61,6 +62,7 @@ def main():
     # scaler.fit() should only be done on training set and then applied to the test set
     scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
     scaler.fit(train_set.reshape(train_set.shape[0] * train_set.shape[1], train_set.shape[2]))
+    joblib.dump(scaler, "models/scaler_" + dataset + ".pkl")
     # Reshape sequences
     train_set = scaler.transform(train_set.reshape(train_set.shape[0] * train_set.shape[1], train_set.shape[2])).reshape(train_set.shape[0], train_set.shape[1], train_set.shape[2])
     validation_set = scaler.transform(validation_set.reshape(validation_set.shape[0] * validation_set.shape[1], validation_set.shape[2])).reshape(validation_set.shape[0], validation_set.shape[1], validation_set.shape[2])
