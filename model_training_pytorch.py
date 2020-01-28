@@ -1,3 +1,4 @@
+import os
 import torch
 from torch import nn, optim
 import torch.nn.functional as F
@@ -185,20 +186,20 @@ def get_data(folder, target_classes, to_exclude=None, ignore_files=None, dev="cp
 
 
 def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore_files=None, target_classes=None, dev='cpu'):
-    sensor_data, annotations = data_helper.get_data_from_files(train_folder, ignore_files=ignore_files)
+    tensor_data, annotations = data_helper.get_data_from_files(train_folder, ignore_files=ignore_files, res_rate=25, to_exclude=to_exclude)
     # Create tensor from files
-    tensor = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
+    # tensor_data = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
     # include only the relevant classes we are interested in
     targets = annotations[target_classes].values
 
     # Split into train, validation
-    perm_img_ind = np.random.permutation(range(len(tensor)))
+    perm_img_ind = np.random.permutation(range(len(tensor_data)))
     train_ind = perm_img_ind[:int(len(perm_img_ind) * train_valid_split)]
     valid_ind = perm_img_ind[int(len(perm_img_ind) * train_valid_split):]
 
-    x_train = np.array([tensor[i] for i in train_ind])
+    x_train = np.array([tensor_data[i] for i in train_ind])
     y_train = np.array([targets[i] for i in train_ind])
-    x_valid = np.array([tensor[i] for i in valid_ind])
+    x_valid = np.array([tensor_data[i] for i in valid_ind])
     y_valid = np.array([targets[i] for i in valid_ind])
 
     # Normalize/Scale only on train data. Use that scaler to later scale valid and test data
@@ -238,13 +239,13 @@ def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore
 
 
 def load_test_data(test_folder, scaler=None, to_exclude=None, ignore_files=None, target_classes=None, dev='cpu'):
-    sensor_data, annotations = data_helper.get_data_from_files(test_folder, ignore_files=ignore_files)
+    tensor_data, annotations = data_helper.get_data_from_files(test_folder, ignore_files=ignore_files, res_rate=25, to_exclude=to_exclude)
     ### Create tensor from files
-    tensor = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
+    # tensor = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
     # include only the relevant classes we are interested in
     targets = annotations[target_classes].values
 
-    x_test = tensor
+    x_test = tensor_data
     y_test = targets
 
     # Use the scaler from the training phase if specified
@@ -302,7 +303,7 @@ def train_model(save_model_to='models/lstm', train_folder=None, to_exclude=None,
     # loss_func = F.binary_cross_entropy  # use this loss only when class is binary
     loss_func = F.mse_loss
     # Training
-    epochs = 100
+    epochs = 30
     fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every=None, tensorboard=False)
     # Save model
     torch.save({'state_dict': model.state_dict()}, f'{save_model_to}.pt')
@@ -355,22 +356,34 @@ def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=No
     print(f"Accuracy: {acc:.5f} Precision: {precision:.5f} Recall: {recall:.5f}")
 
 
-if __name__ == "__main__":
-    # Data needs to be split into train and testing folder
-    # TODO make a data helper function to do this
+def train_test_model():
+    dataset = "manual_sessions/cpr_experiment"
 
-    save_model_to = "models/lstm"
-    train_folder = 'manual_sessions/cpr_experiment_split/train'
-    test_folder = 'manual_sessions/cpr_experiment_split/test'
     to_exclude = ['Ankle', 'Hip']  # variables to exclude
     ### Read Data
     # read data from session folder
-    ignore_files = None  # ["kinect"]
-    # train_folder = 'manual_sessions/tabletennis_strokes/train'
+    ignore_files = ["kinect"]
     # target_classes = ["correct_stroke"]
-    target_classes = ['classRate', 'classDepth', 'classRelease']
+    target_classes = ['classRelease']  #, 'classDepth', 'classRate']
 
-    train_model(save_model_to, train_folder, to_exclude, ignore_files, target_classes)
-    # print("Training done")
-    # load_model()
-    test_model(save_model_to, test_folder, to_exclude, ignore_files, target_classes)
+    # Data needs to be split into train and testing folder
+    # use the data helper function to do this
+    if not os.path.isdir(f"{dataset}/train") or not os.path.isdir(f"{dataset}/test"):
+        to_exclude = ['Ankle', 'Hip']
+        ignore_files = ['kinect']
+        data_helper.create_train_test_folders(data=dataset,
+                                              new_folder_location=None,
+                                              train_test_ratio=0.85,
+                                              ignore_files=ignore_files,
+                                              to_exclude=to_exclude
+                                              )
+
+    save_model_to = "models/lstm"
+
+    train_model(save_model_to, f"{dataset}/train", to_exclude, ignore_files, target_classes)
+    test_model(save_model_to, f"{dataset}/test", to_exclude, ignore_files, target_classes)
+
+
+if __name__ == "__main__":
+    train_test_model()
+
