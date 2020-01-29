@@ -173,8 +173,7 @@ def create_batches(df, bin_size):
     return batch  # tensor
 
 
-def get_data_from_files(folder, ignore_files=None):
-    sessions = read_zips_from_folder(folder)
+def get_data_from_files(folder, ignore_files=None, res_rate=25, to_exclude=None):
     # get the sensor data and annotation files (if exist)
     if ignore_files is None:
         ann_name = f"{folder}/annotations.pkl"
@@ -187,11 +186,57 @@ def get_data_from_files(folder, ignore_files=None):
         with open(ann_name, "rb") as f:
             annotations = pickle.load(f)
         with open(sensor_name, "rb") as f:
-            sensor_data = pickle.load(f)
+            tensor_data = pickle.load(f)
     else:
+        sessions = read_zips_from_folder(folder)
+        if len(sessions) <= 0:
+            raise FileNotFoundError(f"No recording sessions found in {folder}")
         sensor_data, annotations = read_data_files(sessions, ignore_files=ignore_files)
+        # Transform sensor_data to tensor_data and save it
+        tensor_data = tensor_transform(sensor_data, annotations, res_rate=res_rate, to_exclude=to_exclude)
         with open(ann_name, "wb") as f:
             pickle.dump(annotations, f)
         with open(sensor_name, "wb") as f:
-            pickle.dump(sensor_data, f)
-    return sensor_data, annotations
+            pickle.dump(tensor_data, f)
+
+    return tensor_data, annotations
+
+
+def create_train_test_folders(data, new_folder_location=None, train_test_ratio=0.85, ignore_files=None, to_exclude=None):
+    if new_folder_location is None:
+        new_folder_location = data
+    # Train and test data is chosen randomly
+    sessions = read_zips_from_folder(data)
+    sensor_data, annotations = read_data_files(sessions, ignore_files=ignore_files)
+    tensor_data = tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
+    # mask with train_test_ratio*len(annotations) amount of ones
+    train_mask = np.zeros(len(annotations), dtype=int)
+    train_mask[:int(len(annotations)*train_test_ratio)] = 1
+    np.random.shuffle(train_mask)
+    train_mask = train_mask.astype(bool)
+
+    train_annotations = annotations[train_mask]
+    train_sensor_data = tensor_data[train_mask]
+    test_annotations = annotations[~train_mask]
+    test_sensor_data = tensor_data[~train_mask]
+
+    if ignore_files is None:
+        ann_name = "annotations.pkl"
+        sensor_name = "sensor_data.pkl"
+    else:
+        ann_name = f"annotations_ignorefiles{'_'.join(ignore_files)}.pkl"
+        sensor_name = f"sensor_data_ignorefiles{'_'.join(ignore_files)}.pkl"
+
+    os.makedirs(f'{new_folder_location}/train', exist_ok=True)
+    with open(f'{new_folder_location}/train/{ann_name}', "wb") as f:
+        pickle.dump(train_annotations, f)
+    with open(f'{new_folder_location}/train/{sensor_name}', "wb") as f:
+        pickle.dump(train_sensor_data, f)
+
+    os.makedirs(f'{new_folder_location}/test', exist_ok=True)
+    with open(f'{new_folder_location}/test/{ann_name}', "wb") as f:
+        pickle.dump(test_annotations, f)
+    with open(f'{new_folder_location}/test/{sensor_name}', "wb") as f:
+        pickle.dump(test_sensor_data, f)
+
+

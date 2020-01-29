@@ -1,3 +1,4 @@
+import os
 import torch
 from torch import nn, optim
 import torch.nn.functional as F
@@ -184,25 +185,109 @@ def get_data(folder, target_classes, to_exclude=None, ignore_files=None, dev="cp
     return train_dl, valid_dl, test_dl, x_train.shape[-1]
 
 
-def train_model():
+def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore_files=None, target_classes=None, dev='cpu'):
+    tensor_data, annotations = data_helper.get_data_from_files(train_folder, ignore_files=ignore_files, res_rate=25, to_exclude=to_exclude)
+    # Create tensor from files
+    # tensor_data = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
+    # include only the relevant classes we are interested in
+    targets = annotations[target_classes].values
+
+    # Split into train, validation
+    perm_img_ind = np.random.permutation(range(len(tensor_data)))
+    train_ind = perm_img_ind[:int(len(perm_img_ind) * train_valid_split)]
+    valid_ind = perm_img_ind[int(len(perm_img_ind) * train_valid_split):]
+
+    x_train = np.array([tensor_data[i] for i in train_ind])
+    y_train = np.array([targets[i] for i in train_ind])
+    x_valid = np.array([tensor_data[i] for i in valid_ind])
+    y_valid = np.array([targets[i] for i in valid_ind])
+
+    # Normalize/Scale only on train data. Use that scaler to later scale valid and test data
+    # Pay attention to the range of your activation function! (Tanh --> [-1,1], Sigmoid --> [0,1])
+    scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
+    scaler.fit(x_train.reshape(x_train.shape[0] * x_train.shape[1], x_train.shape[2]))
+
+    # Reshape sequences
+    x_train = scaler.transform(x_train.reshape(x_train.shape[0] * x_train.shape[1], x_train.shape[2])).reshape(
+        x_train.shape[0],
+        x_train.shape[1],
+        x_train.shape[2])
+    x_valid = scaler.transform(x_valid.reshape(x_valid.shape[0] * x_valid.shape[1], x_valid.shape[2])).reshape(
+        x_valid.shape[0],
+        x_valid.shape[1],
+        x_valid.shape[2])
+
+    x_train, y_train, x_valid, y_valid = map(
+        torch.tensor, (x_train, y_train, x_valid, y_valid)
+    )
+
+    batchsize = 64
+    # Create as Dataset and use Dataloader
+    train_ds = TensorDataset(x_train.float(), y_train.float())
+    valid_ds = TensorDataset(x_valid.float(), y_valid.float())
+    # Create Dataloaders for the dataset
+    train_dl = DataLoader(train_ds, batch_size=batchsize, shuffle=True)
+    valid_dl = DataLoader(valid_ds, batch_size=batchsize * 2, shuffle=False)
+
+    def putOnGPU(x, y):
+        return x.to(dev), y.to(dev)
+
+    train_dl = WrappedDataLoader(train_dl, putOnGPU)
+    valid_dl = WrappedDataLoader(valid_dl, putOnGPU)
+    data_dim = x_train.shape[-1]
+    return train_dl, valid_dl, data_dim, scaler
+
+
+def load_test_data(test_folder, scaler=None, to_exclude=None, ignore_files=None, target_classes=None, dev='cpu'):
+    tensor_data, annotations = data_helper.get_data_from_files(test_folder, ignore_files=ignore_files, res_rate=25, to_exclude=to_exclude)
+    ### Create tensor from files
+    # tensor = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
+    # include only the relevant classes we are interested in
+    targets = annotations[target_classes].values
+
+    x_test = tensor_data
+    y_test = targets
+
+    # Use the scaler from the training phase if specified
+    # Pay attention to the range of your activation function! (Tanh --> [-1,1], Sigmoid --> [0,1])
+    if scaler is not None:
+        # Reshape sequences
+        x_test = scaler.transform(x_test.reshape(x_test.shape[0] * x_test.shape[1], x_test.shape[2])).reshape(
+            x_test.shape[0],
+            x_test.shape[1],
+            x_test.shape[2])
+
+    x_test, y_test = map(
+        torch.tensor, (x_test, y_test)
+    )
+
+    batchsize = 64
+    # Create as Dataset and use Dataloader
+    test_ds = TensorDataset(x_test.float(), y_test.float())
+    # Create Dataloaders for the dataset
+    test_dl = DataLoader(test_ds, batch_size=batchsize, shuffle=False)
+
+    def putOnGPU(x, y):
+        return x.to(dev), y.to(dev)
+
+    test_dl = WrappedDataLoader(test_dl, putOnGPU)
+    data_dim = x_test.shape[-1]
+    return test_dl, data_dim
+
+
+def train_model(save_model_to='models/lstm', train_folder=None, to_exclude=None, ignore_files=None, target_classes=None):
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     # dev = "cpu"
     print(f"Device: {dev}")
-
-    to_exclude = ['Ankle', 'Hip']  # variables to exclude
-    ### Read Data
-    # read data from session folder
-    ignore_files = None  # ["kinect"]
-    # folder = 'manual_sessions/tabletennis_strokes'
-    # target_classes = ["correct_stroke"]
-    folder = 'manual_sessions/cpr_experiment'
-    target_classes = ['classRate', 'classDepth', 'classRelease']
-
-    train_dl, valid_dl, test_dl, data_dim = get_data(folder=folder,
-                                                     target_classes=target_classes,
-                                                     to_exclude=to_exclude,
-                                                     ignore_files=ignore_files,
-                                                     dev=dev)
+    ### Load Data
+    train_dl, valid_dl, data_dim, scaler = load_train_data(train_folder=train_folder,
+                                                           train_valid_split=0.7,
+                                                           to_exclude=to_exclude,
+                                                           ignore_files=ignore_files,
+                                                           target_classes=target_classes,
+                                                           dev=dev)
+    # Save the scaler with the model name
+    joblib.dump(scaler, f"{save_model_to}_scaler.pkl")
     # Input shape should be (batch_size, sequence_length, input_dimension)
 
     # Define model (done in function)
@@ -218,13 +303,10 @@ def train_model():
     # loss_func = F.binary_cross_entropy  # use this loss only when class is binary
     loss_func = F.mse_loss
     # Training
-    epochs = 100
+    epochs = 30
     fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every=None, tensorboard=False)
     # Save model
-    torch.save({'state_dict': model.state_dict()}, "models/lstm.pt")
-    # Calculate accuracy
-    acc, precision, recall = acc_prec_rec(model, test_dl)
-    print(f"### Test set ### Accuracy: {acc:.5f} Precision: {precision:.5f} Recall: {recall:.5f}")
+    torch.save({'state_dict': model.state_dict()}, f'{save_model_to}.pt')
 
 
 def acc_prec_rec(model, test_dl):
@@ -248,37 +330,60 @@ def acc_prec_rec(model, test_dl):
         return acc, prec, recall
 
 
-def test_model(path_to_model):
+def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=None, target_classes=None):
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     # dev = "cpu"
     print(f"Device: {dev}")
-
-    to_exclude = ['Ankle', 'Hip']  # variables to exclude
-    ### Read Data
-    # read data from session folder
-    folder = 'manual_sessions/tabletennis_strokes'
-    ignore_files = None
-    # targetClasses = ['classRate', 'classDepth', 'classRelease', 'armsLocked', 'bodyWeight']
-    target_classes = ["correct_stroke"]
-    train_dl, valid_dl, test_dl, data_dim = get_data(folder=folder,
-                                                     target_classes=target_classes,
-                                                     to_exclude=to_exclude,
-                                                     ignore_files=ignore_files,
-                                                     dev=dev)
+    scaler = joblib.load(f"{path_to_model}_scaler.pkl")
+    test_dl, data_dim = load_test_data(test_folder,
+                                       scaler=scaler,
+                                       to_exclude=to_exclude,
+                                       ignore_files=ignore_files,
+                                       target_classes=target_classes,
+                                       dev=dev)
     # Input shape should be (batch_size, sequence_length, input_dimension)
 
     # Define model (done in function)
-    classes = 1
+    classes = len(target_classes)
     hidden_units = 128
-    model = MySmallLSTM(data_dim, hidden_units, classes)
-    model.load_state_dict(torch.load(path_to_model)["state_dict"])
+    model = MyLSTM(data_dim, hidden_units, classes)
+    model.load_state_dict(torch.load(f'{path_to_model}.pt')["state_dict"])
     model.eval()
+    model.to(dev)
     # Test model with test data (fed in batches)
+    # Calculate accuracy, precision and recall
     acc, precision, recall = acc_prec_rec(model, test_dl)
     print(f"Accuracy: {acc:.5f} Precision: {precision:.5f} Recall: {recall:.5f}")
 
 
+def train_test_model():
+    dataset = "manual_sessions/cpr_experiment"
+
+    to_exclude = ['Ankle', 'Hip']  # variables to exclude
+    ### Read Data
+    # read data from session folder
+    ignore_files = ["kinect"]
+    # target_classes = ["correct_stroke"]
+    target_classes = ['classRelease']  #, 'classDepth', 'classRate']
+
+    # Data needs to be split into train and testing folder
+    # use the data helper function to do this
+    if not os.path.isdir(f"{dataset}/train") or not os.path.isdir(f"{dataset}/test"):
+        to_exclude = ['Ankle', 'Hip']
+        ignore_files = ['kinect']
+        data_helper.create_train_test_folders(data=dataset,
+                                              new_folder_location=None,
+                                              train_test_ratio=0.85,
+                                              ignore_files=ignore_files,
+                                              to_exclude=to_exclude
+                                              )
+
+    save_model_to = "models/lstm"
+
+    train_model(save_model_to, f"{dataset}/train", to_exclude, ignore_files, target_classes)
+    test_model(save_model_to, f"{dataset}/test", to_exclude, ignore_files, target_classes)
+
+
 if __name__ == "__main__":
-    train_model()
-    # load_model()
-    # test_model("models/lstm.pt")
+    train_test_model()
+
