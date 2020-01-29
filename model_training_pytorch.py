@@ -384,6 +384,25 @@ def train_test_model():
     test_model(save_model_to, f"{dataset}/test", to_exclude, ignore_files, target_classes)
 
 
+def online_classification(path_to_model):
+    scaler = joblib.load(f"{path_to_model}_scaler.pkl")
+    # needs specification from training (for now just dummy values)
+    num_classes = 3
+    input_dimensions = 49
+
+    hidden_units = 128
+    model = MyLSTM(input_dimensions, hidden_units, num_classes)
+    model.load_state_dict(torch.load(f'{path_to_model}.pt')["state_dict"])
+    model.eval()
+
+    # start loop?
+    # Get input from port (I don't know how to do this)
+    incoming_data = [1, 2, 3, 4, 5, 6, 7]
+    scaled_data = scaler.transform(incoming_data)
+    prediction = model(scaled_data)
+
+
 if __name__ == "__main__":
     train_test_model()
+    # online_classification("models/lstm.pt")
 
