@@ -387,11 +387,11 @@ def train_test_model():
 def online_classification(path_to_model):
     scaler = joblib.load(f"{path_to_model}_scaler.pkl")
     # needs specification from training (for now just dummy values)
-    num_classes = 3
+    classes = ["classRate", "classDepth", "classRelease"]
     input_dimensions = 49
 
     hidden_units = 128
-    model = MyLSTM(input_dimensions, hidden_units, num_classes)
+    model = MyLSTM(input_dimensions, hidden_units, len(classes))
     model.load_state_dict(torch.load(f'{path_to_model}.pt')["state_dict"])
     model.eval()
 
@@ -400,6 +400,13 @@ def online_classification(path_to_model):
     incoming_data = [1, 2, 3, 4, 5, 6, 7]
     scaled_data = scaler.transform(incoming_data)
     prediction = model(scaled_data)
+
+    result = dict()
+    for i, target_class in enumerate(classes):
+        # TODO write a proper round function for the prediction
+        result[target_class] = round(prediction[i])
+
+    return result
 
 
 if __name__ == "__main__":
