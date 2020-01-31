@@ -119,73 +119,7 @@ class MyLSTM(nn.Module):
         return out
 
 
-def get_data(folder, target_classes, to_exclude=None, ignore_files=None, dev="cpu", seed=1337):
-    # np.random.seed(seed)
-    sensor_data, annotations = data_helper.get_data_from_files(folder, ignore_files=ignore_files)
-    ### Create tensor from files
-    tensor = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
-    # include only the relevant classes we are interested in
-    targets = annotations[target_classes].values
-
-    # Split into train, validation, test
-    train_split = 0.7
-    valid_split = 0.15
-    test_split = 0.15
-    perm_img_ind = np.random.permutation(range(len(tensor)))
-    train_ind = perm_img_ind[:int(len(perm_img_ind) * train_split)]
-    valid_ind = perm_img_ind[int(len(perm_img_ind) * train_split):int(len(perm_img_ind) * (train_split + valid_split))]
-    test_ind = perm_img_ind[int(len(perm_img_ind) * (train_split + valid_split)):]
-
-    x_train = np.array([tensor[i] for i in train_ind])
-    y_train = np.array([targets[i] for i in train_ind])
-    x_valid = np.array([tensor[i] for i in valid_ind])
-    y_valid = np.array([targets[i] for i in valid_ind])
-    x_test = np.array([tensor[i] for i in test_ind])
-    y_test = np.array([targets[i] for i in test_ind])
-
-    # Normalize/Scale only on train data. Use that scaler to later scale valid and test data
-    # Pay attention to the range of your activation function! (Tanh --> [-1,1], Sigmoid --> [0,1])
-    scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
-    scaler.fit(x_train.reshape(x_train.shape[0] * x_train.shape[1], x_train.shape[2]))
-    joblib.dump(scaler, "models/scaler.pkl")
-    # Reshape sequences
-    x_train = scaler.transform(x_train.reshape(x_train.shape[0] * x_train.shape[1], x_train.shape[2])).reshape(
-        x_train.shape[0],
-        x_train.shape[1],
-        x_train.shape[2])
-    x_valid = scaler.transform(x_valid.reshape(x_valid.shape[0] * x_valid.shape[1], x_valid.shape[2])).reshape(
-        x_valid.shape[0],
-        x_valid.shape[1],
-        x_valid.shape[2])
-    x_test = scaler.transform(x_test.reshape(x_test.shape[0] * x_test.shape[1], x_test.shape[2])).reshape(
-        x_test.shape[0],
-        x_test.shape[1],
-        x_test.shape[2])
-
-    x_train, y_train, x_valid, y_valid, x_test, y_test = map(
-        torch.tensor, (x_train, y_train, x_valid, y_valid, x_test, y_test)
-    )
-
-    batchsize = 64
-    # Create as Dataset and use Dataloader
-    train_ds = TensorDataset(x_train.float(), y_train.float())
-    valid_ds = TensorDataset(x_valid.float(), y_valid.float())
-    test_ds = TensorDataset(x_test.float(), y_test.float())
-    # Create Dataloaders for the dataset
-    train_dl = DataLoader(train_ds, batch_size=batchsize, shuffle=True)
-    valid_dl = DataLoader(valid_ds, batch_size=batchsize * 2, shuffle=False)
-    test_dl = DataLoader(test_ds, batch_size=batchsize, shuffle=False)
-
-    def putOnGPU(x, y):
-        return x.to(dev), y.to(dev)
-
-    train_dl = WrappedDataLoader(train_dl, putOnGPU)
-    valid_dl = WrappedDataLoader(valid_dl, putOnGPU)
-    test_dl = WrappedDataLoader(test_dl, putOnGPU)
-    return train_dl, valid_dl, test_dl, x_train.shape[-1]
-
-
-def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore_files=None, target_classes=None, dev='cpu'):
+def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64, dev='cpu'):
     tensor_data, annotations = data_helper.get_data_from_files(train_folder, ignore_files=ignore_files, res_rate=25, to_exclude=to_exclude)
     # Create tensor from files
     # tensor_data = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
@@ -221,7 +155,6 @@ def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore
         torch.tensor, (x_train, y_train, x_valid, y_valid)
     )
 
-    batchsize = 64
     # Create as Dataset and use Dataloader
     train_ds = TensorDataset(x_train.float(), y_train.float())
     valid_ds = TensorDataset(x_valid.float(), y_valid.float())
@@ -238,7 +171,7 @@ def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore
     return train_dl, valid_dl, data_dim, scaler
 
 
-def load_test_data(test_folder, scaler=None, to_exclude=None, ignore_files=None, target_classes=None, dev='cpu'):
+def load_test_data(test_folder, scaler=None, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64, dev='cpu'):
     tensor_data, annotations = data_helper.get_data_from_files(test_folder, ignore_files=ignore_files, res_rate=25, to_exclude=to_exclude)
     ### Create tensor from files
     # tensor = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
@@ -261,7 +194,6 @@ def load_test_data(test_folder, scaler=None, to_exclude=None, ignore_files=None,
         torch.tensor, (x_test, y_test)
     )
 
-    batchsize = 64
     # Create as Dataset and use Dataloader
     test_ds = TensorDataset(x_test.float(), y_test.float())
     # Create Dataloaders for the dataset
@@ -275,42 +207,24 @@ def load_test_data(test_folder, scaler=None, to_exclude=None, ignore_files=None,
     return test_dl, data_dim
 
 
-def train_model(save_model_to='models/lstm', train_folder=None, to_exclude=None, ignore_files=None, target_classes=None):
-    dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    # dev = "cpu"
-    print(f"Device: {dev}")
-    ### Load Data
-    train_dl, valid_dl, data_dim, scaler = load_train_data(train_folder=train_folder,
-                                                           train_valid_split=0.7,
-                                                           to_exclude=to_exclude,
-                                                           ignore_files=ignore_files,
-                                                           target_classes=target_classes,
-                                                           dev=dev)
-    # Save the scaler with the model name
-    joblib.dump(scaler, f"{save_model_to}_scaler.pkl")
-    # Input shape should be (batch_size, sequence_length, input_dimension)
+def need_train_test_folder(dataset, ignore_files):
+    # Data needs to be split into train and testing folder
+    # use the data helper function to do this
+    if ignore_files is None:
+        ann_name = "annotations.pkl"
+        sensor_name = "sensor_data.pkl"
+    else:
+        ann_name = f"annotations_ignorefiles{'_'.join(ignore_files)}.pkl"
+        sensor_name = f"sensor_data_ignorefiles{'_'.join(ignore_files)}.pkl"
 
-    # Define model (done in function)
-    lr = 0.01
-    classes = len(target_classes)
-    hidden_units = 128
-    model = MyLSTM(data_dim, hidden_units, classes)
-    # Put the model on GPU if available
-    model.to(dev)
-    # Define optimizer
-    opt = optim.Adam(model.parameters(), lr=lr)
-    # Loss function
-    # loss_func = F.binary_cross_entropy  # use this loss only when class is binary
-    loss_func = F.mse_loss
-    # Training
-    epochs = 30
-    fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every=None, tensorboard=False)
-    # Save model
-    torch.save({'state_dict': model.state_dict()}, f'{save_model_to}.pt')
+    return not os.path.isfile(f"{dataset}/train/{ann_name}") \
+           or not os.path.isfile(f"{dataset}/train/{sensor_name}") \
+           or not os.path.isfile(f"{dataset}/test/{ann_name}") \
+           or not os.path.isfile(f"{dataset}/test/{sensor_name}")
 
 
 def acc_prec_rec(model, test_dl):
-    # Accuracy for binary classification
+    # Accuracy for BINARY classification
     model.eval()
     with torch.no_grad():
         total_tp, total_tn, total_fp, total_fn = 0.0, 0.0, 0.0, 0.0
@@ -330,7 +244,37 @@ def acc_prec_rec(model, test_dl):
         return acc, prec, recall
 
 
-def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=None, target_classes=None):
+def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=64, save_model_to='models/lstm', train_folder=None, to_exclude=None, ignore_files=None, target_classes=None):
+    dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    # dev = "cpu"
+    print(f"Device: {dev}")
+    ### Load Data
+    train_dl, valid_dl, data_dim, scaler = load_train_data(train_folder=train_folder,
+                                                           train_valid_split=0.7,
+                                                           to_exclude=to_exclude,
+                                                           ignore_files=ignore_files,
+                                                           target_classes=target_classes,
+                                                           batchsize=batch_size,
+                                                           dev=dev)
+    # Save the scaler with the model name
+    joblib.dump(scaler, f"{save_model_to}_scaler.pkl")
+    # Input shape should be (batch_size, sequence_length, input_dimension)
+
+    # Define model (done in function)
+    classes = len(target_classes)
+    model = MyLSTM(data_dim, hidden_units, classes)
+    # Put the model on GPU if available
+    model.to(dev)
+    # Define optimizer
+    opt = optim.Adam(model.parameters(), lr=learning_rate)
+
+    # Training
+    fit(epochs, model, loss_function, opt, train_dl, valid_dl, save_every=None, tensorboard=False)
+    # Save model
+    torch.save({'state_dict': model.state_dict()}, f'{save_model_to}.pt')
+
+
+def test_model(path_to_model, hidden_units, test_folder=None, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64):
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     # dev = "cpu"
     print(f"Device: {dev}")
@@ -340,12 +284,12 @@ def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=No
                                        to_exclude=to_exclude,
                                        ignore_files=ignore_files,
                                        target_classes=target_classes,
+                                       batchsize=batchsize,
                                        dev=dev)
     # Input shape should be (batch_size, sequence_length, input_dimension)
 
     # Define model (done in function)
     classes = len(target_classes)
-    hidden_units = 128
     model = MyLSTM(data_dim, hidden_units, classes)
     model.load_state_dict(torch.load(f'{path_to_model}.pt')["state_dict"])
     model.eval()
@@ -362,15 +306,9 @@ def train_test_model():
     to_exclude = ['Ankle', 'Hip']  # variables to exclude
     ### Read Data
     # read data from session folder
-    ignore_files = ["kinect"]
-    # target_classes = ["correct_stroke"]
-    target_classes = ['classRelease']  #, 'classDepth', 'classRate']
+    ignore_files = None  # ["kinect"]
 
-    # Data needs to be split into train and testing folder
-    # use the data helper function to do this
-    if not os.path.isdir(f"{dataset}/train") or not os.path.isdir(f"{dataset}/test"):
-        to_exclude = ['Ankle', 'Hip']
-        ignore_files = ['kinect']
+    if need_train_test_folder(dataset, ignore_files):
         data_helper.create_train_test_folders(data=dataset,
                                               new_folder_location=None,
                                               train_test_ratio=0.85,
@@ -378,10 +316,36 @@ def train_test_model():
                                               to_exclude=to_exclude
                                               )
 
+    # target_classes = ["correct_stroke"]
+    target_classes = ['classRelease']  # , 'classDepth', 'classRate']
+
     save_model_to = "models/lstm"
 
-    train_model(save_model_to, f"{dataset}/train", to_exclude, ignore_files, target_classes)
-    test_model(save_model_to, f"{dataset}/test", to_exclude, ignore_files, target_classes)
+    learning_rate = 0.01
+    hidden_units = 128
+    batch_size = 64
+    epochs = 30
+    # Loss function
+    # loss_func = F.binary_cross_entropy  # use this loss only when class is binary
+    loss_func = F.mse_loss
+    train_model(epochs=epochs,
+                learning_rate=learning_rate,
+                hidden_units=hidden_units,
+                batch_size=batch_size,
+                loss_function=loss_func,
+                save_model_to=save_model_to,
+                train_folder=f"{dataset}/train",
+                to_exclude=to_exclude,
+                ignore_files=ignore_files,
+                target_classes=target_classes)
+
+    test_model(path_to_model=save_model_to,
+               hidden_units=hidden_units,
+               test_folder=f"{dataset}/test",
+               to_exclude=to_exclude,
+               ignore_files=ignore_files,
+               target_classes=target_classes,
+               batchsize=batch_size)
 
 
 def online_classification(path_to_model):
