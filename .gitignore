@@ -146,3 +146,5 @@ test_set_broken.npy
 /runs
 /models
 
+*.h5
+gauge.png
