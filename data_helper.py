@@ -43,11 +43,8 @@ def read_data_files(sessions, ignore_files=None):
                         if 'intervals' in data:
                             df = annotation_file_to_array(data, current_time_offset)
                             df_ann = df_ann.append(df)
-                        elif 'frames' in data:
-                            sensor_file_start_loading = time.time()
+                        elif 'frames' or 'Frames' in data:
                             df = sensor_file_to_array(data, current_time_offset)
-                            sensor_file_stop_loading = time.time()
-                            #print(('Sensor file loading  ' + str(sensor_file_stop_loading - sensor_file_start_loading)))
                             # Concatenate this dataframe in the dfALL and then sort dfALL by index
                             df_all = pd.concat([df_all, df], ignore_index=False, sort=False).sort_index()
                             df_all = df_all.apply(pd.to_numeric).fillna(method='bfill')
@@ -60,9 +57,17 @@ def read_data_files(sessions, ignore_files=None):
 # OUT: concatenated data frame df_all
 def sensor_file_to_array(data, offset):
     # concatenate the data with the intervals normalized and drop attribute 'frames'
+    framesKey= 'frames'
+    if 'Frames' in data:
+        framesKey = 'Frames'
+    applicationNameKey = 'applicationName'
+    if 'ApplicationName' in data:
+        applicationNameKey = 'ApplicationName'
+    # check in case of null values
+    data[framesKey] = [x for x in data[framesKey] if x]
     df = pd.concat([pd.DataFrame(data),
-                    json_normalize(data['frames'])],
-                   axis=1).drop('frames', 1)
+                    json_normalize(data[framesKey])],
+                   axis=1).drop(framesKey, 1)
 
     # remove underscore from column-file e.g. 3_Ankle_Left_X becomes 3AnkleLeftX
     df.columns = df.columns.str.replace("_", "")
@@ -73,7 +78,7 @@ def sensor_file_to_array(data, offset):
     # retrieve the application name
     # app_name = df.applicationName.all()
     # remove the prefix 'frameAttributes.' from the column names
-    df.columns = df.columns.str.replace("frameAttributes", df.applicationName.all())
+    df.columns = df.columns.str.replace("frameAttributes", df[applicationNameKey].all())
 
     # set the timestamp as index
     df = df.set_index('frameStamp').iloc[:, 2:]
@@ -129,6 +134,7 @@ def annotation_file_to_array(data, offset):
 # in case of training tensor_transformation
 def tensor_transform(df_all, df_ann, res_rate, to_exclude=None):
     if df_ann.empty or df_all.empty:
+        print("Df annotaiton or df all returned as none")
         return None
 
     if to_exclude is not None:
