@@ -8,6 +8,7 @@ bind_ip = '127.0.0.1'
 port_list = [20001]  # could work with 2 ports
 servers = []
 targets = ['classRelease', 'classDepth', 'classRate', 'armsLocked', 'bodyWeight']
+request_count = 0
 
 
 def start_tcp_server(ip, port):
@@ -24,11 +25,11 @@ def handle_client_connection(client_socket, port):
     # json_string = json.loads(request, encoding='ascii')
     for t in targets:
         if t == 'classDepth' or t == 'classRate':
-            return_dict[t] = random.randrange(2)
+            return_dict[t] = random.randrange(3)
         else:
-            return_dict[t] = bool(random.getrandbits(1))
-
-    client_socket.send(return_dict.encode())
+            return_dict[t] =  random.randrange(2)
+    print(return_dict)
+    client_socket.send(str(return_dict).encode())
     client_socket.close()
 
 
