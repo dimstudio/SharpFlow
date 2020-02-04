@@ -18,6 +18,10 @@ plotdf = pd.DataFrame()
 for t in target_classes:
     df = pd.DataFrame()
     df = annotations[[t, 'start']].groupby([t]).count()['start'].rename(t)
+    # number of occurences
+    print(annotations[[t, 'start']].groupby([t]).count()['start'] )
+    # percentage
+    print((annotations[[t, 'start']].groupby([t]).count()['start'] / np.shape(annotations)[0]).round(4))
     plotdf = pd.concat([plotdf, df], 1)
 plotdf.T.plot(kind='bar', rot=0)
 plt.ylabel('Class distribution')
