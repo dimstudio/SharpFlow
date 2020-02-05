@@ -45,7 +45,8 @@ def fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every: int = Non
             )
         val_loss = np.sum(np.multiply(losses, nums)) / np.sum(nums)
         acc, prec, recall = acc_prec_rec(model, valid_dl)
-        print(f"Epoch: {epoch:5d}, Time: {(time.time()-start_time)/60:.3f} min, Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}, Accuracy: {acc:.5f}, Precision: {prec:.5f}, Recall: {recall:.5f}")
+        print(f"Epoch: {epoch:5d}, Time: {(time.time()-start_time)/60:.3f} min, Train_loss: {train_loss:2.10f}, "
+              f"Val_loss: {val_loss:2.10f}, Accuracy: {acc:.5f}, Precision: {prec:.5f}, Recall: {recall:.5f}")
         # add to tensorboard
         if tensorboard:
             writer.add_scalar('Loss/train', train_loss, epoch)
@@ -271,10 +272,11 @@ def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=6
     # Training
     fit(epochs, model, loss_function, opt, train_dl, valid_dl, save_every=None, tensorboard=False)
     # Save model
-    torch.save({'state_dict': model.state_dict()}, f'{save_model_to}.pt')
+    torch.save(dict(model=model, state_dict=model.state_dict()), f'{save_model_to}.pt')
+    # torch.save({'state_dict': model.state_dict()}, f'{save_model_to}.pt')
 
 
-def test_model(path_to_model, hidden_units, test_folder=None, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64):
+def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64):
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     # dev = "cpu"
     print(f"Device: {dev}")
@@ -289,9 +291,9 @@ def test_model(path_to_model, hidden_units, test_folder=None, to_exclude=None, i
     # Input shape should be (batch_size, sequence_length, input_dimension)
 
     # Define model (done in function)
-    classes = len(target_classes)
-    model = MyLSTM(data_dim, hidden_units, classes)
-    model.load_state_dict(torch.load(f'{path_to_model}.pt')["state_dict"])
+    loaded = torch.load(f'{path_to_model}.pt')
+    model = loaded['model']
+    model.load_state_dict(loaded['state_dict'])
     model.eval()
     model.to(dev)
     # Test model with test data (fed in batches)
@@ -301,7 +303,7 @@ def test_model(path_to_model, hidden_units, test_folder=None, to_exclude=None, i
 
 
 def train_test_model():
-    dataset = "manual_sessions/cpr_experiment"
+    dataset = "manual_sessions/cpr_feedback_binary"
 
     to_exclude = ['Ankle', 'Hip']  # variables to exclude
     ### Read Data
@@ -317,7 +319,7 @@ def train_test_model():
                                               )
 
     # target_classes = ["correct_stroke"]
-    target_classes = ['classRelease']  # , 'classDepth', 'classRate']
+    target_classes = ['classRelease', 'classDepth', 'classRate', 'armsLocked', 'bodyWeight']
 
     save_model_to = "models/lstm"
 
@@ -340,7 +342,6 @@ def train_test_model():
                 target_classes=target_classes)
 
     test_model(path_to_model=save_model_to,
-               hidden_units=hidden_units,
                test_folder=f"{dataset}/test",
                to_exclude=to_exclude,
                ignore_files=ignore_files,
@@ -348,21 +349,19 @@ def train_test_model():
                batchsize=batch_size)
 
 
-def online_classification(path_to_model):
+def online_classification(path_to_model, input_sample):
     scaler = joblib.load(f"{path_to_model}_scaler.pkl")
     # needs specification from training (for now just dummy values)
-    classes = ["classRate", "classDepth", "classRelease"]
-    input_dimensions = 49
+    classes = ['classRelease', 'classDepth', 'classRate', 'armsLocked', 'bodyWeight']
 
-    hidden_units = 128
-    model = MyLSTM(input_dimensions, hidden_units, len(classes))
-    model.load_state_dict(torch.load(f'{path_to_model}.pt')["state_dict"])
+    loaded = torch.load(f'{path_to_model}.pt')
+    model = loaded['model']
+    model.load_state_dict(loaded['state_dict'])
     model.eval()
 
     # start loop?
     # Get input from port (I don't know how to do this)
-    incoming_data = [1, 2, 3, 4, 5, 6, 7]
-    scaled_data = scaler.transform(incoming_data)
+    scaled_data = scaler.transform(input_sample)
     prediction = model(scaled_data)
 
     result = dict()
