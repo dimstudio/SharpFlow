@@ -349,29 +349,6 @@ def train_test_model():
                batchsize=batch_size)
 
 
-def online_classification(path_to_model, input_sample):
-    scaler = joblib.load(f"{path_to_model}_scaler.pkl")
-    # needs specification from training (for now just dummy values)
-    classes = ['classRelease', 'classDepth', 'classRate', 'armsLocked', 'bodyWeight']
-
-    loaded = torch.load(f'{path_to_model}.pt')
-    model = loaded['model']
-    model.load_state_dict(loaded['state_dict'])
-    model.eval()
-
-    # start loop?
-    # Get input from port (I don't know how to do this)
-    scaled_data = scaler.transform(input_sample)
-    prediction = model(scaled_data)
-
-    result = dict()
-    for i, target_class in enumerate(classes):
-        # TODO write a proper round function for the prediction
-        result[target_class] = round(prediction[i])
-
-    return result
-
-
 if __name__ == "__main__":
     train_test_model()
     # online_classification("models/lstm.pt")
