@@ -3,12 +3,15 @@ import select
 import socket
 import random
 import threading
+import torch
+import joblib
 
 bind_ip = '127.0.0.1'
 port_list = [20001]  # could work with 2 ports
 servers = []
 targets = ['classRelease', 'classDepth', 'classRate', 'armsLocked', 'bodyWeight']
 request_count = 0
+trained_model = 'models/lstm.pt'
 
 
 def start_tcp_server(ip, port):
@@ -30,6 +33,25 @@ def handle_client_connection(client_socket, port):
     print(return_dict)
     client_socket.send(str(return_dict).encode())
     client_socket.close()
+
+
+def online_classification(path_to_model, input_sample):
+    scaler = joblib.load(f"{path_to_model}_scaler.pkl")
+    # needs specification from training (for now just dummy values)
+
+    loaded = torch.load(f'{path_to_model}.pt')
+    model = loaded['model']
+    model.load_state_dict(loaded['state_dict'])
+    model.eval()
+
+    scaled_data = scaler.transform(input_sample)
+    prediction = model(scaled_data)
+
+    result = dict()
+    for i, target_class in enumerate(targets):
+        result[target_class] = round(prediction[i])
+
+    return result
 
 
 if __name__ == '__main__':
