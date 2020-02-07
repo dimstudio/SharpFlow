@@ -145,13 +145,16 @@ def process_data():
     result = {}
     if (not df_myo.empty) and (not df_kinect.empty) and ("Kinect.ShoulderLeftY" in df_kinect):
         complete_compression = complete_compression + 1
+        batch = np.empty([17, 52], dtype=float)
         df_all = pd.concat([df_kinect, df_myo], ignore_index=False, sort=False).sort_index()
         if to_exclude is not None:
             for el in to_exclude:
                 df_all = df_all[[col for col in df_all.columns if el not in col]]
         print("Before resampling: "+str(np.shape(df_all)))
-        batch = df_all.resample(str(25) + 'ms').first()
-        print(("Shape of the interval is " + str(batch.shape)))
+        interval = df_all.resample(str(120) + 'ms').first()
+        print(("Shape of the interval is " + str(interval.shape)))
+        batch = np.stack(batch)
+        print(("Shape of the batch is " + str(batch.shape)))
         result = online_classification("models/lstm",batch)
     return result
 
@@ -162,7 +165,6 @@ def online_classification(path_to_model, input_sample):
     model = loaded['model']
     model.load_state_dict(loaded['state_dict'])
     model.eval()
-
     scaled_data = scaler.transform(input_sample)
     prediction = model(scaled_data)
 
