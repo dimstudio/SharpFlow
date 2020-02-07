@@ -169,14 +169,14 @@ def online_classification(path_to_model, input_sample):
     scaled_data = scaler.transform(input_sample)
     scaled_data = np.expand_dims(scaled_data, 0)
     print(("Shape of the batch is " + str(scaled_data.shape)))
-    print(scaled_data.shape)
     data_tensor = torch.tensor(scaled_data)
     prediction = model(data_tensor.float())
 
-    result = dict()
+    result = {}
     for i, target_class in enumerate(targets):
-        result[target_class] = round(prediction[i])
+        result[target_class] = round(prediction.tolist()[0][i])
 
+    print(result)
     return result
 
 
