@@ -45,8 +45,9 @@ def fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every: int = Non
             )
         val_loss = np.sum(np.multiply(losses, nums)) / np.sum(nums)
         acc, prec, recall = acc_prec_rec(model, valid_dl)
+        f1 = 2 * prec*recall/(prec + recall)
         print(f"Epoch: {epoch:5d}, Time: {(time.time()-start_time)/60:.3f} min, Train_loss: {train_loss:2.10f}, "
-              f"Val_loss: {val_loss:2.10f}, Accuracy: {acc:.5f}, Precision: {prec:.5f}, Recall: {recall:.5f}")
+              f"Val_loss: {val_loss:2.10f}, Accuracy: {acc:.5f}, Precision: {prec:.5f}, Recall: {recall:.5f}, F1-Score: {f1}")
         # add to tensorboard
         if tensorboard:
             writer.add_scalar('Loss/train', train_loss, epoch)
@@ -299,7 +300,8 @@ def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=No
     # Test model with test data (fed in batches)
     # Calculate accuracy, precision and recall
     acc, precision, recall = acc_prec_rec(model, test_dl)
-    print(f"Accuracy: {acc:.5f} Precision: {precision:.5f} Recall: {recall:.5f}")
+    f1 = 2 * precision * recall / (precision + recall)
+    print(f"Accuracy: {acc:.5f} Precision: {precision:.5f} Recall: {recall:.5f} F1-Score: {f1}")
 
 
 def train_test_model():
@@ -330,16 +332,16 @@ def train_test_model():
     # Loss function
     # loss_func = F.binary_cross_entropy  # use this loss only when class is binary
     loss_func = F.mse_loss
-    train_model(epochs=epochs,
-                learning_rate=learning_rate,
-                hidden_units=hidden_units,
-                batch_size=batch_size,
-                loss_function=loss_func,
-                save_model_to=save_model_to,
-                train_folder=f"{dataset}/train",
-                to_exclude=to_exclude,
-                ignore_files=ignore_files,
-                target_classes=target_classes)
+    # train_model(epochs=epochs,
+    #             learning_rate=learning_rate,
+    #             hidden_units=hidden_units,
+    #             batch_size=batch_size,
+    #             loss_function=loss_func,
+    #             save_model_to=save_model_to,
+    #             train_folder=f"{dataset}/train",
+    #             to_exclude=to_exclude,
+    #             ignore_files=ignore_files,
+    #             target_classes=target_classes)
 
     test_model(path_to_model=save_model_to,
                test_folder=f"{dataset}/test",
