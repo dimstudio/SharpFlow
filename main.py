@@ -152,8 +152,7 @@ def process_data():
         print("Before resampling: "+str(np.shape(df_all)))
         interval = df_all.resample(str(120) + 'ms').first()
         print(("Shape of the interval is " + str(interval.shape)))
-        batch = np.expand_dims(batch, 0)
-        print(("Shape of the batch is " + str(batch.shape)))
+
         result = online_classification("models/lstm",batch)
     return result
 
@@ -164,11 +163,15 @@ def online_classification(path_to_model, input_sample):
     loaded = torch.load(f'{path_to_model}.pt')
     model = loaded['model']
     model.load_state_dict(loaded['state_dict'])
+    model.to('cpu')
     model.eval()
 
     scaled_data = scaler.transform(input_sample)
+    scaled_data = np.expand_dims(scaled_data, 0)
+    print(("Shape of the batch is " + str(scaled_data.shape)))
     print(scaled_data.shape)
-    prediction = model(scaled_data)
+    data_tensor = torch.tensor(scaled_data)
+    prediction = model(data_tensor.float())
 
     result = dict()
     for i, target_class in enumerate(targets):
