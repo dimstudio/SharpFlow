@@ -40,14 +40,14 @@ def read_data_files(sessions, ignore_files=None):
                     if '.json' in filename:
                         with z.open(filename) as f:
                             data = json.load(f)
-                        if 'intervals' in data:
-                            df = annotation_file_to_array(data, current_time_offset)
-                            df_ann = df_ann.append(df)
-                        elif 'frames' or 'Frames' in data:
-                            df = sensor_file_to_array(data, current_time_offset)
-                            # Concatenate this dataframe in the dfALL and then sort dfALL by index
-                            df_all = pd.concat([df_all, df], ignore_index=False, sort=False).sort_index()
-                            df_all = df_all.apply(pd.to_numeric).fillna(method='bfill')
+                            if 'intervals' in data or 'Intervals' in data:
+                                df = annotation_file_to_array(data, current_time_offset)
+                                df_ann = df_ann.append(df)
+                            elif 'frames' in data or 'Frames' in data:
+                                df = sensor_file_to_array(data, current_time_offset)
+                                # Concatenate this dataframe in the dfALL and then sort dfALL by index
+                                df_all = pd.concat([df_all, df], ignore_index=False, sort=False).sort_index()
+                                df_all = df_all.apply(pd.to_numeric,errors='ignore').fillna(method='bfill')
     return df_all, df_ann
 
 
@@ -76,7 +76,7 @@ def sensor_file_to_array(data, offset):
     df['frameStamp'] = pd.to_timedelta(df['frameStamp']) + offset
 
     # retrieve the application name
-    # app_name = df.applicationName.all()
+    app_name = df[applicationNameKey].all()
     # remove the prefix 'frameAttributes.' from the column names
     df.columns = df.columns.str.replace("frameAttributes", df[applicationNameKey].all())
 
@@ -87,11 +87,11 @@ def sensor_file_to_array(data, offset):
 
     # convert to numeric (when reading from JSON it converts into object in the pandas DF)
     # with the parameter 'ignore' it will skip all the non-numerical fields
-    # df = df.apply(pd.to_numeric, errors='ignore')
     df = df.apply(lambda x: pd.to_numeric(x, errors='ignore'))
 
     # Keep the numeric types only (categorical data are not supported now)
-    df = df.select_dtypes(include=['float64', 'int64'])
+    if (app_name!="Feedback"):
+        df = df.select_dtypes(include=['float64', 'int64'])
     # Remove columns in which the sum of attributes is 0 (meaning there the information is 0)
     df = df.loc[:, (df.sum(axis=0) != 0)]
     # KINECT FIX
@@ -112,9 +112,12 @@ def sensor_file_to_array(data, offset):
 # OUT: concatenated dataframe df_all
 def annotation_file_to_array(data, offset):
     # concatenate the data with the intervals normalized and drop attribute 'intervals'
+    intervalsKey = 'intervals'
+    if 'Intervals' in data:
+        intervalsKey = 'Intervals'
     df = pd.concat([pd.DataFrame(data),
-                    json_normalize(data['intervals'])],
-                   axis=1).drop('intervals', 1)
+                    json_normalize(data[intervalsKey])],
+                   axis=1).drop(intervalsKey, 1)
     # convert to numeric (when reading from JSON it converts into object in the pandas DF)
     # with the parameter 'ignore' it will skip all the non-numerical fields
     df = df.apply(pd.to_numeric, errors='ignore')
@@ -206,6 +209,15 @@ def get_data_from_files(folder, ignore_files=None, res_rate=25, to_exclude=None)
             pickle.dump(tensor_data, f)
 
     return tensor_data, annotations
+
+
+def get_feedback_from_files(folder, ignore_files=None):
+    # get the sensor data and annotation files (if exist)
+    sessions = read_zips_from_folder(folder)
+    if len(sessions) <= 0:
+        raise FileNotFoundError(f"No recording sessions found in {folder}")
+    feedback_data, annotations = read_data_files(sessions, ignore_files=ignore_files)
+    return feedback_data, annotations
 
 
 def create_train_test_folders(data, new_folder_location=None, train_test_ratio=0.85, ignore_files=None, to_exclude=None):
