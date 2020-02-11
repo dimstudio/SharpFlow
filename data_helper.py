@@ -201,7 +201,7 @@ def get_data_from_files(folder, ignore_files=None, res_rate=25, to_exclude=None)
         if len(sessions) <= 0:
             raise FileNotFoundError(f"No recording sessions found in {folder}")
         sensor_data, annotations = read_data_files(sessions, ignore_files=ignore_files)
-        # TODO this is a workaround
+        # TODO this is a workaround and only works for the CPR dataset!!!
         annotations = annotations.loc[
             ~((annotations.armsLocked == 1) & (annotations.bodyWeight == 1) & (annotations.classDepth == 0))]
         # Transform sensor_data to tensor_data and save it

@@ -246,6 +246,25 @@ def acc_prec_rec(model, test_dl):
         return acc, prec, recall
 
 
+def acc_prec_rec_modules(model, test_dl):
+    # Accuracy for BINARY classification
+    model.eval()
+    with torch.no_grad():
+        total_tp, total_tn, total_fp, total_fn = torch.zeros(1, model.output_size), torch.zeros(1, model.output_size), torch.zeros(1, model.output_size), torch.zeros(1, model.output_size)
+        for xb, yb in test_dl:
+            ypred = model(xb)
+            ypred_thresh = ypred > 0.5
+            total_tp += torch.sum((ypred_thresh == 1) * (ypred_thresh == yb), dim=0)
+            total_tn += torch.sum((ypred_thresh == 0) * (ypred_thresh == yb), dim=0)
+            total_fp += torch.sum((ypred_thresh == 1) * (ypred_thresh != yb), dim=0)
+            total_fn += torch.sum((ypred_thresh == 0) * (ypred_thresh != yb), dim=0)
+        acc = (total_tp+total_tn)/(total_tp+total_tn+total_fn+total_fp)
+        prec = torch.zeros(1, model.output_size)
+        prec[total_tp+total_fp != 0] = total_tp/(total_tp+total_fp)
+        recall = total_tp/(total_tp+total_fn)
+        return acc.squeeze(), prec.squeeze(), recall.squeeze()
+
+
 def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=64, save_model_to='models/lstm', train_folder=None, to_exclude=None, ignore_files=None, target_classes=None):
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     # dev = "cpu"
@@ -299,13 +318,15 @@ def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=No
     model.to(dev)
     # Test model with test data (fed in batches)
     # Calculate accuracy, precision and recall
-    acc, precision, recall = acc_prec_rec(model, test_dl)
+    # acc, precision, recall = acc_prec_rec(model, test_dl)
+    acc, precision, recall = acc_prec_rec_modules(model, test_dl)
     f1 = 2 * precision * recall / (precision + recall)
-    print(f"Accuracy: {acc:.5f} Precision: {precision:.5f} Recall: {recall:.5f} F1-Score: {f1}")
+    for i, tar_class in enumerate(target_classes):
+        print(f"Target-class: {tar_class} Accuracy: {acc[i]:.5f} Precision: {precision[i]:.5f} Recall: {recall[i]:.5f} F1-Score: {f1[i]}")
 
 
 def train_test_model():
-    dataset = "manual_sessions/cpr_feedback_binary"
+    dataset = "manual_sessions/CPR_feedback_binary"
 
     to_exclude = ['Ankle', 'Hip']  # variables to exclude
     ### Read Data
