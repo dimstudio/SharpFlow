@@ -64,29 +64,35 @@ class MyLSTM(nn.Module):
 
 # load the json parsed data
 def json_to_df(data):
-    df = pd.concat([pd.DataFrame(data),
-                    json_normalize(data['Frames'])],
-                   axis=1).drop('Frames', 1)
-    df.columns = df.columns.str.replace("_", "")
-    if not df.empty:
-        df['frameStamp'] = pd.to_timedelta(df['frameStamp'])  # + start_script
-        df.columns = df.columns.str.replace("frameAttributes", df["ApplicationName"].all())
-        df = df.set_index('frameStamp').iloc[:, 2:]
-        df = df[~df.index.duplicated(keep='first')]
-        df = df.apply(lambda x: pd.to_numeric(x, errors='ignore'))
-        df = df.select_dtypes(include=['float64', 'int64'])
-        df = df.loc[:, (df.sum(axis=0) != 0)]
-        # KINECT fix
-        df = df[df.nunique().sort_values(ascending=False).index]
-        df.rename(columns=lambda x: re.sub('KinectReader.\d', 'KinectReader.', x), inplace=True)
-        df.rename(columns=lambda x: re.sub('Kinect.\d', 'Kinect.', x), inplace=True)
-        df = df.loc[:, ~df.columns.duplicated()]
-        # Exclude irrelevant attributes
-        #for el in to_exclude:
-        #    df = df[[col for col in df.columns if el not in col]]
-        #df = df.apply(pd.to_numeric).fillna(method='bfill')
-    else:
-        print('Empty data frame. Did you wear Myo?')
+    df = pd.DataFrame()
+    try:
+        df = pd.concat([pd.DataFrame(data),
+                        json_normalize(data['Frames'])],
+                       axis=1).drop('Frames', 1)
+        df.columns = df.columns.str.replace("_", "")
+        if not df.empty:
+            df['frameStamp'] = pd.to_timedelta(df['frameStamp'])  # + start_script
+            df.columns = df.columns.str.replace("frameAttributes", df["ApplicationName"].all())
+            df = df.set_index('frameStamp').iloc[:, 2:]
+            df = df[~df.index.duplicated(keep='first')]
+            df = df.apply(lambda x: pd.to_numeric(x, errors='ignore'))
+            df = df.select_dtypes(include=['float64', 'int64'])
+            df = df.loc[:, (df.sum(axis=0) != 0)]
+            # KINECT fix
+            df = df[df.nunique().sort_values(ascending=False).index]
+            df.rename(columns=lambda x: re.sub('KinectReader.\d', 'KinectReader.', x), inplace=True)
+            df.rename(columns=lambda x: re.sub('Kinect.\d', 'Kinect.', x), inplace=True)
+            df = df.loc[:, ~df.columns.duplicated()]
+            # Exclude irrelevant attributes
+            #for el in to_exclude:
+            #    df = df[[col for col in df.columns if el not in col]]
+            #df = df.apply(pd.to_numeric).fillna(method='bfill')
+        else:
+            print('Empty data frame. Did you wear Myo?')
+    except AttributeError:
+        print('Failed to parse the JSON file')
+        pass
+
     return df
 
 
