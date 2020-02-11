@@ -8,6 +8,7 @@ import joblib
 import pandas as pd
 from pandas.io.json import json_normalize
 from torch import nn
+import time
 import numpy as np
 import ast
 
@@ -66,27 +67,22 @@ class MyLSTM(nn.Module):
 def json_to_df(data):
     df = pd.DataFrame()
     try:
+
         df = pd.concat([pd.DataFrame(data),
                         json_normalize(data['Frames'])],
                        axis=1).drop('Frames', 1)
+
         df.columns = df.columns.str.replace("_", "")
         if not df.empty:
             df['frameStamp'] = pd.to_timedelta(df['frameStamp'])  # + start_script
             df.columns = df.columns.str.replace("frameAttributes", df["ApplicationName"].all())
             df = df.set_index('frameStamp').iloc[:, 2:]
             df = df[~df.index.duplicated(keep='first')]
-            df = df.apply(lambda x: pd.to_numeric(x, errors='ignore'))
+            df = df.astype('float',errors='ignore')
             df = df.select_dtypes(include=['float64', 'int64'])
             df = df.loc[:, (df.sum(axis=0) != 0)]
-            # KINECT fix
-            df = df[df.nunique().sort_values(ascending=False).index]
-            df.rename(columns=lambda x: re.sub('KinectReader.\d', 'KinectReader.', x), inplace=True)
-            df.rename(columns=lambda x: re.sub('Kinect.\d', 'Kinect.', x), inplace=True)
             df = df.loc[:, ~df.columns.duplicated()]
-            # Exclude irrelevant attributes
-            #for el in to_exclude:
-            #    df = df[[col for col in df.columns if el not in col]]
-            #df = df.apply(pd.to_numeric).fillna(method='bfill')
+            df = df[df.nunique().sort_values(ascending=False).index]
         else:
             print('Empty data frame. Did you wear Myo?')
     except AttributeError:
@@ -116,6 +112,7 @@ def initModel(path_to_model):
     model.eval()
 
 def handle_client_connection(client_socket, port):
+    timer2 = time.time()
     request = client_socket.recv(10000000)
     #print(request)
     return_dict = {}
@@ -126,12 +123,17 @@ def handle_client_connection(client_socket, port):
             if jst is not None:
                 if jst["ApplicationName"] == "Kinect":
                     global df_kinect
+                    timerKinect = time.time()
                     df_kinect = json_to_df(jst)
+                    #print("Timer Kinect " + str(time.time() - timerKinect))
 
                 elif jst["ApplicationName"] == "Myo":
                     global df_myo
                     try:
+                        timerMyo = time.time()
                         df_myo = json_to_df(jst)
+                        #print("Timer Myo " + str(time.time() - timerMyo))
+
                         return_dict = process_data()
                     except ValueError:  # includes simplejson.decoder.JSONDecodeError
                         print('Decoding Myo has failed')
@@ -141,6 +143,7 @@ def handle_client_connection(client_socket, port):
         print('Decoding JSON has failed')
         return_dict = {'classRelease': '', 'classDepth': '', 'classRate': '', 'armsLocked': '', 'bodyWeight': ''}
         pass
+    print("Entire process " + str(time.time() - timer2))
     client_socket.send(str(return_dict).encode())
 
     #text_file = open("example_request.txt", "w")
@@ -172,10 +175,12 @@ def process_data():
     global df_all
     global complete_compression
     result = {}
+
     if (not df_myo.empty) and (not df_kinect.empty) and ("Kinect.ShoulderLeftY" in df_kinect):
         complete_compression = complete_compression + 1
-        df_kinect["Kinect.ShoulderLeftY"].plot()
-        batch = np.empty([17, 52], dtype=float)
+        #df_kinect["Kinect.ShoulderLeftY"].plot()
+        #batch = np.empty([17, 52], dtype=float)
+        timer0 = time.time()
         df_all = pd.concat([df_kinect, df_myo], ignore_index=False, sort=False).sort_index()
         if to_exclude is not None:
             for el in to_exclude:
@@ -189,9 +194,13 @@ def process_data():
         elif np.shape(resampled)[0] >= bin_size:
             interval = resampled.iloc[:bin_size].fillna(method='ffill').fillna(method='bfill')
 
-        print(("Shape of the interval is " + str(interval.shape)))
+        #print(("Shape of the interval is " + str(interval.shape)))
+        #print("Processing time " + str(time.time() - timer0))
+        # print(interval)
+        timer1 = time.time()
+        result = online_classification(interval)
+        #print("Classification time "+str(time.time()-timer1))
 
-        result = online_classification(batch)
     return result
 
 
@@ -207,6 +216,7 @@ def online_classification(input_sample):
         if not np.isnan(prediction.tolist()[0][0]):
             result[target_class] = round(prediction.tolist()[0][i])
         else:
+            print(f"Error! Prediction is {prediction.tolist()[0][i]} with input: {data_tensor.float()}")
             result[target_class] = ''
     print(result)
     return result
