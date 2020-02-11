@@ -12,6 +12,13 @@ tensor_data, annotations = data_helper.get_data_from_files(train_folder, ignore_
 print("Shape of the tensor_data is: " + str(np.shape(tensor_data)))
 print("Shape of the annotation is: " + str(np.shape(annotations)))
 
+annotations = annotations.loc[~((annotations.armsLocked == 1) & (annotations.bodyWeight == 1)  & (annotations.classDepth == 0))]
+#annotations = annotations.loc[~(annotations.armsLocked == 1)]
+#to_keep = annotations[annotations.classDepth == 1]
+#to_keep = to_keep.apply(np.random.permutation, axis=1)
+#to_keep_index = to_keep.index
+#annotations = annotations.iloc[to_keep_index[0:int(to_keep_index.shape[0]*0.9)]]
+
 # # class distribution
 plotdf = pd.DataFrame()
 

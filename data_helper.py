@@ -207,7 +207,9 @@ def get_data_from_files(folder, ignore_files=None, res_rate=25, to_exclude=None)
             pickle.dump(annotations, f)
         with open(sensor_name, "wb") as f:
             pickle.dump(tensor_data, f)
-
+    #TODO this is a workaround
+    annotations = annotations.loc[
+        ~((annotations.armsLocked == 1) & (annotations.bodyWeight == 1) & (annotations.classDepth == 0))]
     return tensor_data, annotations
 
 
