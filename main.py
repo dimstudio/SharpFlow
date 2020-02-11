@@ -17,8 +17,12 @@ servers = []
 targets = ['classRelease', 'classDepth', 'classRate', 'armsLocked', 'bodyWeight']
 to_exclude = ['Ankle', 'Hip']  # variables to exclude Kinect specific
 request_count = 0
+path_to_model = "models/lstm"
 trained_model = 'models/lstm.pt'
 complete_compression = 0
+bin_size = 17
+
+
 class MySmallLSTM(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super(MySmallLSTM, self).__init__()
@@ -92,30 +96,51 @@ def start_tcp_server(ip, port):
     server.bind((ip, port))
     server.listen(5)  # max backlog of connections
     print(('Listening on {}:{}'.format(ip, port)))
+    initModel(path_to_model)
     servers.append(server)
 
+def initModel(path_to_model):
+    global scaler
+    global model
+    scaler = joblib.load(f"{path_to_model}_scaler.pkl")
+    loaded = torch.load(f'{path_to_model}.pt')
+    model = loaded['model']
+    model.load_state_dict(loaded['state_dict'])
+    model.to('cpu')
+    model.eval()
 
 def handle_client_connection(client_socket, port):
     request = client_socket.recv(10000000)
     #print(request)
-    json_string = json.loads(request, encoding='ascii')
+    return_dict = {}
+
+    try:
+        json_string = json.loads(request, encoding='ascii')
+        for jst in json_string:
+            if jst is not None:
+                if jst["ApplicationName"] == "Kinect":
+                    global df_kinect
+                    df_kinect = json_to_df(jst)
+
+                elif jst["ApplicationName"] == "Myo":
+                    global df_myo
+                    try:
+                        df_myo = json_to_df(jst)
+                        return_dict = process_data()
+                    except ValueError:  # includes simplejson.decoder.JSONDecodeError
+                        print('Decoding Myo has failed')
+                        pass
+
+    except ValueError:  # includes simplejson.decoder.JSONDecodeError
+        print('Decoding JSON has failed')
+        return_dict = {'classRelease': '', 'classDepth': '', 'classRate': '', 'armsLocked': '', 'bodyWeight': ''}
+        pass
+    client_socket.send(str(return_dict).encode())
 
     #text_file = open("example_request.txt", "w")
     #text_file.write(str(json_string))
     #text_file.close()
 
-    for jst in json_string:
-        if jst is not None:
-            if jst["ApplicationName"] == "Kinect":
-                global df_kinect
-                df_kinect = json_to_df(jst)
-
-            elif jst["ApplicationName"] == "Myo":
-                global df_myo
-                df_myo = json_to_df(jst)
-    return_dict = process_data()
-
-    client_socket.send(str(return_dict).encode())
     client_socket.close()
 
 
@@ -133,7 +158,6 @@ def exampleData():
                 global df_myo
                 df_myo = json_to_df(jst)
     return_dict = process_data()
-    str(return_dict)
 
 
 def process_data():
@@ -144,56 +168,58 @@ def process_data():
     result = {}
     if (not df_myo.empty) and (not df_kinect.empty) and ("Kinect.ShoulderLeftY" in df_kinect):
         complete_compression = complete_compression + 1
+        df_kinect["Kinect.ShoulderLeftY"].plot()
         batch = np.empty([17, 52], dtype=float)
         df_all = pd.concat([df_kinect, df_myo], ignore_index=False, sort=False).sort_index()
         if to_exclude is not None:
             for el in to_exclude:
                 df_all = df_all[[col for col in df_all.columns if el not in col]]
         print("Before resampling: "+str(np.shape(df_all)))
-        interval = df_all.resample(str(120) + 'ms').first()
+        resampled = df_all.resample(str(25) + 'ms').first()
+        print(("Before filling " + str(resampled.shape)))
+        if np.shape(resampled)[0] < bin_size:
+            interval = np.pad(df_all.fillna(method='ffill').fillna(method='bfill'),
+                              ((0, bin_size - np.shape(resampled)[0]), (0, 0)), 'edge')
+        elif np.shape(resampled)[0] >= bin_size:
+            interval = resampled.iloc[:bin_size].fillna(method='ffill').fillna(method='bfill')
+
         print(("Shape of the interval is " + str(interval.shape)))
 
-        result = online_classification("models/lstm",batch)
+        result = online_classification(batch)
     return result
 
 
-def online_classification(path_to_model, input_sample):
-    scaler = joblib.load(f"{path_to_model}_scaler.pkl")
-
-    loaded = torch.load(f'{path_to_model}.pt')
-    model = loaded['model']
-    model.load_state_dict(loaded['state_dict'])
-    model.to('cpu')
-    model.eval()
+def online_classification(input_sample):
 
     scaled_data = scaler.transform(input_sample)
     scaled_data = np.expand_dims(scaled_data, 0)
-    print(("Shape of the batch is " + str(scaled_data.shape)))
-    print(scaled_data.shape)
+    #print(("Shape of the batch is " + str(scaled_data.shape))) # always Shape of the batch is (1, 17, 52)
     data_tensor = torch.tensor(scaled_data)
     prediction = model(data_tensor.float())
-
-    result = dict()
+    result = {}
     for i, target_class in enumerate(targets):
-        result[target_class] = round(prediction[i])
-
+        if not np.isnan(prediction.tolist()[0][0]):
+            result[target_class] = round(prediction.tolist()[0][i])
+        else:
+            result[target_class] = ''
+    print(result)
     return result
 
 
 if __name__ == '__main__':
 
-    exampleData()
-    # for port in port_list:
-    #     start_tcp_server(bind_ip, port)
-    #
-    # while True:
-    #     readable, _, _ = select.select(servers, [], [])
-    #     ready_server = readable[0]
-    #     request_count = request_count + 1
-    #     connection, address = ready_server.accept()
-    #     print(('Accepted connection from {}:{}'.format(address[0], address[1])))
-    #     client_handler = threading.Thread(
-    #         target=handle_client_connection,
-    #         args=(connection, port)
-    #     )
-    #     client_handler.start()
+    #exampleData()
+    for port in port_list:
+        start_tcp_server(bind_ip, port)
+
+    while True:
+        readable, _, _ = select.select(servers, [], [])
+        ready_server = readable[0]
+        request_count = request_count + 1
+        connection, address = ready_server.accept()
+        print(('Accepted connection from {}:{}'.format(address[0], address[1])))
+        client_handler = threading.Thread(
+            target=handle_client_connection,
+            args=(connection, port)
+        )
+        client_handler.start()
