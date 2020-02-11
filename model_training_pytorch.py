@@ -326,7 +326,7 @@ def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=No
 
 
 def train_test_model():
-    dataset = "manual_sessions/cpr_feedback_binary"
+    dataset = "manual_sessions/CPR_feedback_binary"
 
     to_exclude = ['Ankle', 'Hip']  # variables to exclude
     ### Read Data
