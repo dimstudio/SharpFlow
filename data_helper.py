@@ -72,36 +72,37 @@ def sensor_file_to_array(data, offset):
     # remove underscore from column-file e.g. 3_Ankle_Left_X becomes 3AnkleLeftX
     df.columns = df.columns.str.replace("_", "")
 
-    # from string to timedelta + offset
-    df['frameStamp'] = pd.to_timedelta(df['frameStamp']) + offset
+    if not df.empty:
+        # from string to timedelta + offset
+        df['frameStamp'] = pd.to_timedelta(df['frameStamp']) + offset
 
-    # retrieve the application name
-    app_name = df[applicationNameKey].all()
-    # remove the prefix 'frameAttributes.' from the column names
-    df.columns = df.columns.str.replace("frameAttributes", df[applicationNameKey].all())
+        # retrieve the application name
+        app_name = df[applicationNameKey].all()
+        # remove the prefix 'frameAttributes.' from the column names
+        df.columns = df.columns.str.replace("frameAttributes", df[applicationNameKey].all())
 
-    # set the timestamp as index
-    df = df.set_index('frameStamp').iloc[:, 2:]
-    # exclude duplicates (taking the first occurence in case of duplicates)
-    df = df[~df.index.duplicated(keep='first')]
+        # set the timestamp as index
+        df = df.set_index('frameStamp').iloc[:, 2:]
+        # exclude duplicates (taking the first occurence in case of duplicates)
+        df = df[~df.index.duplicated(keep='first')]
 
-    # convert to numeric (when reading from JSON it converts into object in the pandas DF)
-    # with the parameter 'ignore' it will skip all the non-numerical fields
-    df = df.apply(lambda x: pd.to_numeric(x, errors='ignore'))
+        # convert to numeric (when reading from JSON it converts into object in the pandas DF)
+        # with the parameter 'ignore' it will skip all the non-numerical fields
+        df = df.apply(lambda x: pd.to_numeric(x, errors='ignore'))
 
-    # Keep the numeric types only (categorical data are not supported now)
-    if (app_name!="Feedback"):
-        df = df.select_dtypes(include=['float64', 'int64'])
-    # Remove columns in which the sum of attributes is 0 (meaning there the information is 0)
-    df = df.loc[:, (df.sum(axis=0) != 0)]
-    # KINECT FIX
-    # The application KienctReader can track up to 6 people, whose attributes are
-    # 1ShoulderLeftX or 3AnkleRightY. We get rid of this numbers assuming there is only 1 user
-    # This part has to be rethought in case of 2 users
-    df = df[df.nunique().sort_values(ascending=False).index]
-    df.rename(columns=lambda x: re.sub('KinectReader.\d', 'KinectReader.', x), inplace=True)
-    df.rename(columns=lambda x: re.sub('Kinect.\d', 'Kinect.', x), inplace=True)
-    df = df.loc[:, ~df.columns.duplicated()]
+        # Keep the numeric types only (categorical data are not supported now)
+        if (app_name!="Feedback"):
+            df = df.select_dtypes(include=['float64', 'int64'])
+        # Remove columns in which the sum of attributes is 0 (meaning there the information is 0)
+        df = df.loc[:, (df.sum(axis=0) != 0)]
+        # KINECT FIX
+        # The application KienctReader can track up to 6 people, whose attributes are
+        # 1ShoulderLeftX or 3AnkleRightY. We get rid of this numbers assuming there is only 1 user
+        # This part has to be rethought in case of 2 users
+        df = df[df.nunique().sort_values(ascending=False).index]
+        df.rename(columns=lambda x: re.sub('KinectReader.\d', 'KinectReader.', x), inplace=True)
+        df.rename(columns=lambda x: re.sub('Kinect.\d', 'Kinect.', x), inplace=True)
+        df = df.loc[:, ~df.columns.duplicated()]
 
     return df
 
