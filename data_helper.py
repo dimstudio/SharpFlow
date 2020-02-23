@@ -178,7 +178,7 @@ def create_batches(df, bin_size):
         batch = np.dstack((batch, np.array(interval)))
     batch = batch[:, :, 1:].swapaxes(2, 0).swapaxes(1, 2)  # (197, 11, 59)
     print(("The shape of the batch is " + str(batch.shape)))
-    print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
+    #print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
 
     return batch  # tensor
 
@@ -202,9 +202,11 @@ def get_data_from_files(folder, ignore_files=None, res_rate=25, to_exclude=None)
         if len(sessions) <= 0:
             raise FileNotFoundError(f"No recording sessions found in {folder}")
         sensor_data, annotations = read_data_files(sessions, ignore_files=ignore_files)
+
         # TODO this is a workaround and only works for the CPR dataset!!!
-        annotations = annotations.loc[
-            ~((annotations.armsLocked == 1) & (annotations.bodyWeight == 1) & (annotations.classDepth == 0))]
+        #annotations = annotations.loc[
+        #    ~((annotations.armsLocked == 1) & (annotations.bodyWeight == 1) & (annotations.classDepth == 0))]
+
         # Transform sensor_data to tensor_data and save it
         tensor_data = tensor_transform(sensor_data, annotations, res_rate=res_rate, to_exclude=to_exclude)
         with open(ann_name, "wb") as f:
