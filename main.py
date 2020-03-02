@@ -49,9 +49,10 @@ class MyLSTM(nn.Module):
         self.output_size = output_size
 
         self.lstm1 = nn.LSTM(input_size=self.input_size, hidden_size=self.hidden_size, num_layers=1, batch_first=True)
-        self.lstm2 = nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size//2, num_layers=1, batch_first=True)
-        self.lin1 = nn.Linear(in_features=self.hidden_size//2, out_features=self.hidden_size//4)
-        self.lin2 = nn.Linear(in_features=self.hidden_size//4, out_features=self.output_size)
+        self.lstm2 = nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size // 2, num_layers=1,
+                             batch_first=True)
+        self.lin1 = nn.Linear(in_features=self.hidden_size // 2, out_features=self.hidden_size // 4)
+        self.lin2 = nn.Linear(in_features=self.hidden_size // 4, out_features=self.output_size)
 
     def forward(self, x):
         out, state = self.lstm1(x)

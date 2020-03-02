@@ -72,36 +72,37 @@ def sensor_file_to_array(data, offset):
     # remove underscore from column-file e.g. 3_Ankle_Left_X becomes 3AnkleLeftX
     df.columns = df.columns.str.replace("_", "")
 
-    # from string to timedelta + offset
-    df['frameStamp'] = pd.to_timedelta(df['frameStamp']) + offset
+    if not df.empty:
+        # from string to timedelta + offset
+        df['frameStamp'] = pd.to_timedelta(df['frameStamp']) + offset
 
-    # retrieve the application name
-    app_name = df[applicationNameKey].all()
-    # remove the prefix 'frameAttributes.' from the column names
-    df.columns = df.columns.str.replace("frameAttributes", df[applicationNameKey].all())
+        # retrieve the application name
+        app_name = df[applicationNameKey].all()
+        # remove the prefix 'frameAttributes.' from the column names
+        df.columns = df.columns.str.replace("frameAttributes", df[applicationNameKey].all())
 
-    # set the timestamp as index
-    df = df.set_index('frameStamp').iloc[:, 2:]
-    # exclude duplicates (taking the first occurence in case of duplicates)
-    df = df[~df.index.duplicated(keep='first')]
+        # set the timestamp as index
+        df = df.set_index('frameStamp').iloc[:, 2:]
+        # exclude duplicates (taking the first occurence in case of duplicates)
+        df = df[~df.index.duplicated(keep='first')]
 
-    # convert to numeric (when reading from JSON it converts into object in the pandas DF)
-    # with the parameter 'ignore' it will skip all the non-numerical fields
-    df = df.apply(lambda x: pd.to_numeric(x, errors='ignore'))
+        # convert to numeric (when reading from JSON it converts into object in the pandas DF)
+        # with the parameter 'ignore' it will skip all the non-numerical fields
+        df = df.apply(lambda x: pd.to_numeric(x, errors='ignore'))
 
-    # Keep the numeric types only (categorical data are not supported now)
-    if (app_name!="Feedback"):
-        df = df.select_dtypes(include=['float64', 'int64'])
-    # Remove columns in which the sum of attributes is 0 (meaning there the information is 0)
-    df = df.loc[:, (df.sum(axis=0) != 0)]
-    # KINECT FIX
-    # The application KienctReader can track up to 6 people, whose attributes are
-    # 1ShoulderLeftX or 3AnkleRightY. We get rid of this numbers assuming there is only 1 user
-    # This part has to be rethought in case of 2 users
-    df = df[df.nunique().sort_values(ascending=False).index]
-    df.rename(columns=lambda x: re.sub('KinectReader.\d', 'KinectReader.', x), inplace=True)
-    df.rename(columns=lambda x: re.sub('Kinect.\d', 'Kinect.', x), inplace=True)
-    df = df.loc[:, ~df.columns.duplicated()]
+        # Keep the numeric types only (categorical data are not supported now)
+        if (app_name!="Feedback"):
+            df = df.select_dtypes(include=['float64', 'int64'])
+        # Remove columns in which the sum of attributes is 0 (meaning there the information is 0)
+        df = df.loc[:, (df.sum(axis=0) != 0)]
+        # KINECT FIX
+        # The application KienctReader can track up to 6 people, whose attributes are
+        # 1ShoulderLeftX or 3AnkleRightY. We get rid of this numbers assuming there is only 1 user
+        # This part has to be rethought in case of 2 users
+        df = df[df.nunique().sort_values(ascending=False).index]
+        df.rename(columns=lambda x: re.sub('KinectReader.\d', 'KinectReader.', x), inplace=True)
+        df.rename(columns=lambda x: re.sub('Kinect.\d', 'Kinect.', x), inplace=True)
+        df = df.loc[:, ~df.columns.duplicated()]
 
     return df
 
@@ -177,7 +178,7 @@ def create_batches(df, bin_size):
         batch = np.dstack((batch, np.array(interval)))
     batch = batch[:, :, 1:].swapaxes(2, 0).swapaxes(1, 2)  # (197, 11, 59)
     print(("The shape of the batch is " + str(batch.shape)))
-    print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
+    #print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
 
     return batch  # tensor
 
@@ -201,9 +202,11 @@ def get_data_from_files(folder, ignore_files=None, res_rate=25, to_exclude=None)
         if len(sessions) <= 0:
             raise FileNotFoundError(f"No recording sessions found in {folder}")
         sensor_data, annotations = read_data_files(sessions, ignore_files=ignore_files)
+
         # TODO this is a workaround and only works for the CPR dataset!!!
-        annotations = annotations.loc[
-            ~((annotations.armsLocked == 1) & (annotations.bodyWeight == 1) & (annotations.classDepth == 0))]
+        #annotations = annotations.loc[
+        #    ~((annotations.armsLocked == 1) & (annotations.bodyWeight == 1) & (annotations.classDepth == 0))]
+
         # Transform sensor_data to tensor_data and save it
         tensor_data = tensor_transform(sensor_data, annotations, res_rate=res_rate, to_exclude=to_exclude)
         with open(ann_name, "wb") as f:

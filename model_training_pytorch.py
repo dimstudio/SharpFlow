@@ -45,8 +45,8 @@ def fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every: int = Non
             )
         val_loss = np.sum(np.multiply(losses, nums)) / np.sum(nums)
         acc, prec, recall = acc_prec_rec(model, valid_dl)
-        f1 = 2 * prec*recall/(prec + recall)
-        print(f"Epoch: {epoch:5d}, Time: {(time.time()-start_time)/60:.3f} min, Train_loss: {train_loss:2.10f}, "
+        f1 = 2 * prec * recall / (prec + recall)
+        print(f"Epoch: {epoch:5d}, Time: {(time.time() - start_time) / 60:.3f} min, Train_loss: {train_loss:2.10f}, "
               f"Val_loss: {val_loss:2.10f}, Accuracy: {acc:.5f}, Precision: {prec:.5f}, Recall: {recall:.5f}, F1-Score: {f1}")
         # add to tensorboard
         if tensorboard:
@@ -106,9 +106,10 @@ class MyLSTM(nn.Module):
         self.output_size = output_size
 
         self.lstm1 = nn.LSTM(input_size=self.input_size, hidden_size=self.hidden_size, num_layers=1, batch_first=True)
-        self.lstm2 = nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size//2, num_layers=1, batch_first=True)
-        self.lin1 = nn.Linear(in_features=self.hidden_size//2, out_features=self.hidden_size//4)
-        self.lin2 = nn.Linear(in_features=self.hidden_size//4, out_features=self.output_size)
+        self.lstm2 = nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size // 2, num_layers=1,
+                             batch_first=True)
+        self.lin1 = nn.Linear(in_features=self.hidden_size // 2, out_features=self.hidden_size // 4)
+        self.lin2 = nn.Linear(in_features=self.hidden_size // 4, out_features=self.output_size)
 
     def forward(self, x):
         out, state = self.lstm1(x)
@@ -121,8 +122,12 @@ class MyLSTM(nn.Module):
         return out
 
 
-def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64, dev='cpu'):
-    tensor_data, annotations = data_helper.get_data_from_files(train_folder, ignore_files=ignore_files, res_rate=25, to_exclude=to_exclude)
+def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore_files=None, target_classes=None,
+                    batchsize=64, dev='cpu'):
+    tensor_data, annotations = data_helper.get_data_from_files(train_folder, ignore_files=ignore_files, res_rate=25,
+                                                               to_exclude=to_exclude)
+    print("Shape tensor_data "+str(tensor_data.shape))
+    print("Shape annotations " + str(annotations.shape))
     # Create tensor from files
     # tensor_data = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
     # include only the relevant classes we are interested in
@@ -173,8 +178,10 @@ def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore
     return train_dl, valid_dl, data_dim, scaler
 
 
-def load_test_data(test_folder, scaler=None, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64, dev='cpu'):
-    tensor_data, annotations = data_helper.get_data_from_files(test_folder, ignore_files=ignore_files, res_rate=25, to_exclude=to_exclude)
+def load_test_data(test_folder, scaler=None, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64,
+                   dev='cpu'):
+    tensor_data, annotations = data_helper.get_data_from_files(test_folder, ignore_files=ignore_files, res_rate=25,
+                                                               to_exclude=to_exclude)
     ### Create tensor from files
     # tensor = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
     # include only the relevant classes we are interested in
@@ -237,12 +244,12 @@ def acc_prec_rec(model, test_dl):
             total_tn += torch.sum((ypred_thresh == 0) * (ypred_thresh == yb))
             total_fp += torch.sum((ypred_thresh == 1) * (ypred_thresh != yb))
             total_fn += torch.sum((ypred_thresh == 0) * (ypred_thresh != yb))
-        acc = (total_tp+total_tn)/(total_tp+total_tn+total_fn+total_fp)
-        if total_tp+total_fp == 0:
+        acc = (total_tp + total_tn) / (total_tp + total_tn + total_fn + total_fp)
+        if total_tp + total_fp == 0:
             prec = 0
         else:
-            prec = total_tp/(total_tp+total_fp)
-        recall = total_tp/(total_tp+total_fn)
+            prec = total_tp / (total_tp + total_fp)
+        recall = total_tp / (total_tp + total_fn)
         return acc, prec, recall
 
 
@@ -250,7 +257,9 @@ def acc_prec_rec_modules(model, test_dl):
     # Accuracy for BINARY classification
     model.eval()
     with torch.no_grad():
-        total_tp, total_tn, total_fp, total_fn = torch.zeros(1, model.output_size), torch.zeros(1, model.output_size), torch.zeros(1, model.output_size), torch.zeros(1, model.output_size)
+        total_tp, total_tn, total_fp, total_fn = torch.zeros(1, model.output_size), torch.zeros(1,
+                                                                                                model.output_size), torch.zeros(
+            1, model.output_size), torch.zeros(1, model.output_size)
         for xb, yb in test_dl:
             ypred = model(xb)
             ypred_thresh = ypred > 0.5
@@ -258,14 +267,15 @@ def acc_prec_rec_modules(model, test_dl):
             total_tn += torch.sum((ypred_thresh == 0) * (ypred_thresh == yb), dim=0)
             total_fp += torch.sum((ypred_thresh == 1) * (ypred_thresh != yb), dim=0)
             total_fn += torch.sum((ypred_thresh == 0) * (ypred_thresh != yb), dim=0)
-        acc = (total_tp+total_tn)/(total_tp+total_tn+total_fn+total_fp)
+        acc = (total_tp + total_tn) / (total_tp + total_tn + total_fn + total_fp)
         prec = torch.zeros(1, model.output_size)
-        prec[total_tp+total_fp != 0] = total_tp/(total_tp+total_fp)
-        recall = total_tp/(total_tp+total_fn)
+        prec[total_tp + total_fp != 0] = total_tp / (total_tp + total_fp)
+        recall = total_tp / (total_tp + total_fn)
         return acc.squeeze(), prec.squeeze(), recall.squeeze()
 
 
-def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=64, save_model_to='models/lstm', train_folder=None, to_exclude=None, ignore_files=None, target_classes=None):
+def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=64, save_model_to='models/lstm',
+                train_folder=None, to_exclude=None, ignore_files=None, target_classes=None):
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     # dev = "cpu"
     print(f"Device: {dev}")
@@ -322,7 +332,8 @@ def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=No
     acc, precision, recall = acc_prec_rec_modules(model, test_dl)
     f1 = 2 * precision * recall / (precision + recall)
     for i, tar_class in enumerate(target_classes):
-        print(f"Target-class: {tar_class} Accuracy: {acc[i]:.5f} Precision: {precision[i]:.5f} Recall: {recall[i]:.5f} F1-Score: {f1[i]}")
+        print(
+            f"Target-class: {tar_class} Accuracy: {acc[i]:.5f} Precision: {precision[i]:.5f} Recall: {recall[i]:.5f} F1-Score: {f1[i]}")
 
 
 def train_test_model():
@@ -351,18 +362,18 @@ def train_test_model():
     batch_size = 64
     epochs = 30
     # Loss function
-    # loss_func = F.binary_cross_entropy  # use this loss only when class is binary
-    loss_func = F.mse_loss
-    # train_model(epochs=epochs,
-    #             learning_rate=learning_rate,
-    #             hidden_units=hidden_units,
-    #             batch_size=batch_size,
-    #             loss_function=loss_func,
-    #             save_model_to=save_model_to,
-    #             train_folder=f"{dataset}/train",
-    #             to_exclude=to_exclude,
-    #             ignore_files=ignore_files,
-    #             target_classes=target_classes)
+    loss_func = F.binary_cross_entropy  # use this loss only when class is binary
+    # loss_func = F.mse_loss
+    train_model(epochs=epochs,
+                learning_rate=learning_rate,
+                hidden_units=hidden_units,
+                batch_size=batch_size,
+                loss_function=loss_func,
+                save_model_to=save_model_to,
+                train_folder=f"{dataset}/train",
+                to_exclude=to_exclude,
+                ignore_files=ignore_files,
+                target_classes=target_classes)
 
     test_model(path_to_model=save_model_to,
                test_folder=f"{dataset}/test",
@@ -375,4 +386,3 @@ def train_test_model():
 if __name__ == "__main__":
     train_test_model()
     # online_classification("models/lstm.pt")
-
