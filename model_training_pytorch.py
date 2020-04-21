@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from sklearn import preprocessing
-
+from sklearn.model_selection import KFold
 import matplotlib.pyplot as plt
 import numpy as np
 import time
@@ -143,6 +143,11 @@ def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore
     x_valid = np.array([tensor_data[i] for i in valid_ind])
     y_valid = np.array([targets[i] for i in valid_ind])
 
+    train_dl, valid_dl, data_dim, scaler = get_dataloader(x_train, y_train, x_valid, y_valid, batchsize, dev)
+    return train_dl, valid_dl, data_dim, scaler
+
+
+def get_dataloader(x_train, y_train, x_valid, y_valid, batchsize, dev):
     # Normalize/Scale only on train data. Use that scaler to later scale valid and test data
     # Pay attention to the range of your activation function! (Tanh --> [-1,1], Sigmoid --> [0,1])
     scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
@@ -306,6 +311,45 @@ def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=6
     # torch.save({'state_dict': model.state_dict()}, f'{save_model_to}.pt')
 
 
+def train_model_kfold(epochs, hidden_units, learning_rate, loss_function, batch_size=64, save_model_to='models/lstm',
+                train_folder=None, to_exclude=None, ignore_files=None, target_classes=None):
+    dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    # dev = "cpu"
+    print(f"Device: {dev}")
+    ### Load Data
+    tensor_data, annotations = data_helper.get_data_from_files(train_folder, ignore_files=ignore_files, res_rate=25,
+                                                               to_exclude=to_exclude)
+    targets = annotations[target_classes].values
+    kf = KFold(n_splits=10)
+    kf.get_n_splits(tensor_data)
+    KFold(n_splits=2, random_state=None, shuffle=False)
+    for i, (train_index, test_index) in enumerate(kf.split(tensor_data)):
+        print("TRAIN:", train_index, "TEST:", test_index)
+        x_train, x_valid = tensor_data[train_index], tensor_data[test_index]
+        y_train, y_valid = targets[train_index], targets[test_index]
+
+        train_dl, valid_dl, data_dim, scaler = get_dataloader(x_train, y_train,
+                                                              x_valid, y_valid,
+                                                              batch_size, dev)
+        # Save the scaler with the model name
+        joblib.dump(scaler, f"{save_model_to}_scaler.pkl")
+        # Input shape should be (batch_size, sequence_length, input_dimension)
+
+        # Define model (done in function)
+        classes = len(target_classes)
+        model = MyLSTM(data_dim, hidden_units, classes)
+        # Put the model on GPU if available
+        model.to(dev)
+        # Define optimizer
+        opt = optim.Adam(model.parameters(), lr=learning_rate)
+
+        # Training
+        fit(epochs, model, loss_function, opt, train_dl, valid_dl, save_every=None, tensorboard=False)
+        # Save model
+        torch.save(dict(model=model, state_dict=model.state_dict()), f'{save_model_to}_kfold_{i}.pt')
+    # torch.save({'state_dict': model.state_dict()}, f'{save_model_to}.pt')
+
+
 def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64):
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     # dev = "cpu"
@@ -331,9 +375,12 @@ def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=No
     # acc, precision, recall = acc_prec_rec(model, test_dl)
     acc, precision, recall = acc_prec_rec_modules(model, test_dl)
     f1 = 2 * precision * recall / (precision + recall)
-    for i, tar_class in enumerate(target_classes):
-        print(
-            f"Target-class: {tar_class} Accuracy: {acc[i]:.5f} Precision: {precision[i]:.5f} Recall: {recall[i]:.5f} F1-Score: {f1[i]}")
+    if len(target_classes) > 1:
+        for i, tar_class in enumerate(target_classes):
+            print(
+                f"Target-class: {tar_class} Accuracy: {acc[i]:.5f} Precision: {precision[i]:.5f} Recall: {recall[i]:.5f} F1-Score: {f1[i]}")
+    else:
+        print(f"Accuracy: {acc:.5f} Precision: {precision:.5f} Recall: {recall:.5f} F1-Score: {f1}")
 
 
 def train_test_model():
