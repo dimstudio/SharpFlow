@@ -126,7 +126,7 @@ def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore
                     batchsize=64, dev='cpu'):
     tensor_data, annotations = data_helper.get_data_from_files(train_folder, ignore_files=ignore_files, res_rate=25,
                                                                to_exclude=to_exclude)
-    print("Shape tensor_data "+str(tensor_data.shape))
+    print("Shape tensor_data " + str(tensor_data.shape))
     print("Shape annotations " + str(annotations.shape))
     # Create tensor from files
     # tensor_data = data_helper.tensor_transform(sensor_data, annotations, res_rate=25, to_exclude=to_exclude)
@@ -268,10 +268,10 @@ def acc_prec_rec_modules(model, test_dl):
         for xb, yb in test_dl:
             ypred = model(xb)
             ypred_thresh = ypred > 0.5
-            total_tp += torch.sum((ypred_thresh == 1) * (ypred_thresh == yb), dim=0)
-            total_tn += torch.sum((ypred_thresh == 0) * (ypred_thresh == yb), dim=0)
-            total_fp += torch.sum((ypred_thresh == 1) * (ypred_thresh != yb), dim=0)
-            total_fn += torch.sum((ypred_thresh == 0) * (ypred_thresh != yb), dim=0)
+            total_tp += torch.sum((ypred_thresh == 1) * (ypred_thresh == yb), dim=0).cpu()
+            total_tn += torch.sum((ypred_thresh == 0) * (ypred_thresh == yb), dim=0).cpu()
+            total_fp += torch.sum((ypred_thresh == 1) * (ypred_thresh != yb), dim=0).cpu()
+            total_fn += torch.sum((ypred_thresh == 0) * (ypred_thresh != yb), dim=0).cpu()
         acc = (total_tp + total_tn) / (total_tp + total_tn + total_fn + total_fp)
         prec = torch.zeros(1, model.output_size)
         prec[total_tp + total_fp != 0] = total_tp / (total_tp + total_fp)
@@ -280,10 +280,7 @@ def acc_prec_rec_modules(model, test_dl):
 
 
 def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=64, save_model_to='models/lstm',
-                train_folder=None, to_exclude=None, ignore_files=None, target_classes=None):
-    dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    # dev = "cpu"
-    print(f"Device: {dev}")
+                train_folder=None, to_exclude=None, ignore_files=None, target_classes=None, device="cpu"):
     ### Load Data
     train_dl, valid_dl, data_dim, scaler = load_train_data(train_folder=train_folder,
                                                            train_valid_split=0.7,
@@ -291,7 +288,7 @@ def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=6
                                                            ignore_files=ignore_files,
                                                            target_classes=target_classes,
                                                            batchsize=batch_size,
-                                                           dev=dev)
+                                                           dev=device)
     # Save the scaler with the model name
     joblib.dump(scaler, f"{save_model_to}_scaler.pkl")
     # Input shape should be (batch_size, sequence_length, input_dimension)
@@ -300,7 +297,7 @@ def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=6
     classes = len(target_classes)
     model = MyLSTM(data_dim, hidden_units, classes)
     # Put the model on GPU if available
-    model.to(dev)
+    model.to(device)
     # Define optimizer
     opt = optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -312,17 +309,15 @@ def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=6
 
 
 def train_model_kfold(epochs, hidden_units, learning_rate, loss_function, batch_size=64, save_model_to='models/lstm',
-                train_folder=None, to_exclude=None, ignore_files=None, target_classes=None):
-    dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    # dev = "cpu"
-    print(f"Device: {dev}")
+                      train_folder=None, to_exclude=None, ignore_files=None, target_classes=None, device="cpu"):
     ### Load Data
     tensor_data, annotations = data_helper.get_data_from_files(train_folder, ignore_files=ignore_files, res_rate=25,
                                                                to_exclude=to_exclude)
     targets = annotations[target_classes].values
-    kf = KFold(n_splits=10)
+    # Maybe disable shuffle?
+    kf = KFold(n_splits=10, shuffle=True)
     kf.get_n_splits(tensor_data)
-    KFold(n_splits=2, random_state=None, shuffle=False)
+    # KFold(n_splits=2, random_state=None, shuffle=False)
     for i, (train_index, test_index) in enumerate(kf.split(tensor_data)):
         print("TRAIN:", train_index, "TEST:", test_index)
         x_train, x_valid = tensor_data[train_index], tensor_data[test_index]
@@ -330,16 +325,15 @@ def train_model_kfold(epochs, hidden_units, learning_rate, loss_function, batch_
 
         train_dl, valid_dl, data_dim, scaler = get_dataloader(x_train, y_train,
                                                               x_valid, y_valid,
-                                                              batch_size, dev)
+                                                              batch_size, device)
         # Save the scaler with the model name
-        joblib.dump(scaler, f"{save_model_to}_scaler.pkl")
+        joblib.dump(scaler, f"{save_model_to}_kfold_{i}_scaler.pkl")
         # Input shape should be (batch_size, sequence_length, input_dimension)
 
-        # Define model (done in function)
         classes = len(target_classes)
         model = MyLSTM(data_dim, hidden_units, classes)
         # Put the model on GPU if available
-        model.to(dev)
+        model.to(device)
         # Define optimizer
         opt = optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -350,10 +344,8 @@ def train_model_kfold(epochs, hidden_units, learning_rate, loss_function, batch_
     # torch.save({'state_dict': model.state_dict()}, f'{save_model_to}.pt')
 
 
-def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64):
-    dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    # dev = "cpu"
-    print(f"Device: {dev}")
+def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64,
+               device="cpu", print_results=True):
     scaler = joblib.load(f"{path_to_model}_scaler.pkl")
     test_dl, data_dim = load_test_data(test_folder,
                                        scaler=scaler,
@@ -361,36 +353,31 @@ def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=No
                                        ignore_files=ignore_files,
                                        target_classes=target_classes,
                                        batchsize=batchsize,
-                                       dev=dev)
+                                       dev=device)
     # Input shape should be (batch_size, sequence_length, input_dimension)
 
-    # Define model (done in function)
     loaded = torch.load(f'{path_to_model}.pt')
     model = loaded['model']
     model.load_state_dict(loaded['state_dict'])
     model.eval()
-    model.to(dev)
+    model.to(device)
     # Test model with test data (fed in batches)
     # Calculate accuracy, precision and recall
     # acc, precision, recall = acc_prec_rec(model, test_dl)
     acc, precision, recall = acc_prec_rec_modules(model, test_dl)
     f1 = 2 * precision * recall / (precision + recall)
-    if len(target_classes) > 1:
-        for i, tar_class in enumerate(target_classes):
-            print(
-                f"Target-class: {tar_class} Accuracy: {acc[i]:.5f} Precision: {precision[i]:.5f} Recall: {recall[i]:.5f} F1-Score: {f1[i]}")
-    else:
-        print(f"Accuracy: {acc:.5f} Precision: {precision:.5f} Recall: {recall:.5f} F1-Score: {f1}")
+    if print_results:
+        if len(target_classes) > 1:
+            for i, tar_class in enumerate(target_classes):
+                print(
+                    f"Target-class: {tar_class} Accuracy: {acc[i]:.5f} Precision: {precision[i]:.5f} Recall: {recall[i]:.5f} F1-Score: {f1[i]}")
+        else:
+            print(f"Accuracy: {acc:.5f} Precision: {precision:.5f} Recall: {recall:.5f} F1-Score: {f1}")
+    return acc, precision, recall, f1
 
 
-def train_test_model():
-    dataset = "manual_sessions/CPR_feedback_binary"
-
-    to_exclude = ['Ankle', 'Hip']  # variables to exclude
-    ### Read Data
-    # read data from session folder
-    ignore_files = None  # ["kinect"]
-
+def train_test_model(dataset, to_exclude, ignore_files, target_classes, dev, learning_rate, hidden_units, batch_size,
+                     epochs, loss_func, save_model_to="models/lstm"):
     if need_train_test_folder(dataset, ignore_files):
         data_helper.create_train_test_folders(data=dataset,
                                               new_folder_location=None,
@@ -399,18 +386,6 @@ def train_test_model():
                                               to_exclude=to_exclude
                                               )
 
-    # target_classes = ["correct_stroke"]
-    target_classes = ['classRelease', 'classDepth', 'classRate', 'armsLocked', 'bodyWeight']
-
-    save_model_to = "models/lstm"
-
-    learning_rate = 0.01
-    hidden_units = 128
-    batch_size = 64
-    epochs = 30
-    # Loss function
-    loss_func = F.binary_cross_entropy  # use this loss only when class is binary
-    # loss_func = F.mse_loss
     train_model(epochs=epochs,
                 learning_rate=learning_rate,
                 hidden_units=hidden_units,
@@ -420,16 +395,97 @@ def train_test_model():
                 train_folder=f"{dataset}/train",
                 to_exclude=to_exclude,
                 ignore_files=ignore_files,
-                target_classes=target_classes)
+                target_classes=target_classes,
+                device=dev)
 
     test_model(path_to_model=save_model_to,
                test_folder=f"{dataset}/test",
                to_exclude=to_exclude,
                ignore_files=ignore_files,
                target_classes=target_classes,
-               batchsize=batch_size)
+               batchsize=batch_size,
+               device=dev)
+
+
+def train_test_model_kfold(dataset, to_exclude, ignore_files, target_classes, dev, learning_rate, hidden_units,
+                           batch_size, epochs, loss_func, save_model_to="models/lstm"):
+    if need_train_test_folder(dataset, ignore_files):
+        data_helper.create_train_test_folders(data=dataset,
+                                              new_folder_location=None,
+                                              train_test_ratio=0.85,
+                                              ignore_files=ignore_files,
+                                              to_exclude=to_exclude
+                                              )
+
+    train_model_kfold(epochs=epochs,
+                      learning_rate=learning_rate,
+                      hidden_units=hidden_units,
+                      batch_size=batch_size,
+                      loss_function=loss_func,
+                      save_model_to=save_model_to,
+                      train_folder=f"{dataset}/train",
+                      to_exclude=to_exclude,
+                      ignore_files=ignore_files,
+                      target_classes=target_classes,
+                      device=dev)
+
+    test_model_kfold(path_to_model=save_model_to,
+                     test_folder=f"{dataset}/test",
+                     to_exclude=to_exclude,
+                     ignore_files=ignore_files,
+                     target_classes=target_classes,
+                     batchsize=batch_size,
+                     device=dev)
+
+
+def test_model_kfold(path_to_model, test_folder=None, to_exclude=None, ignore_files=None, target_classes=None, batchsize=64,
+               device="cpu"):
+    # List the models of the kfold and run test_model on all of them
+    kfold_files = os.listdir("/".join(path_to_model.split("/")[:-1]))
+    models = [m for m in kfold_files if "scaler" not in m]
+    acc = np.zeros((len(models), len(target_classes)))
+    precision = np.zeros((len(models), len(target_classes)))
+    recall = np.zeros((len(models), len(target_classes)))
+    f1 = np.zeros((len(models), len(target_classes)))
+
+    for i, model in enumerate(models):
+        acc[i], precision[i], recall[i], f1[i] = test_model(path_to_model=f"{path_to_model}_kfold_{i}",
+                                                            test_folder=test_folder,
+                                                            to_exclude=to_exclude,
+                                                            ignore_files=ignore_files,
+                                                            target_classes=target_classes,
+                                                            batchsize=batchsize,
+                                                            device=device,
+                                                            print_results=False)
+    print("####  KFOLD  ####")
+    if len(target_classes) > 1:
+        for i, tar_class in enumerate(target_classes):
+            print(
+                f"Target-class: {tar_class} Accuracy: {np.mean(acc[:, i]):.5f} Precision: {np.mean(precision[:, i]):.5f} Recall: {np.mean(recall[:, i]):.5f} F1-Score: {np.mean(f1[:, i])}")
+    else:
+        print(f"Accuracy: {np.mean(acc):.5f} Precision: {np.mean(precision):.5f} Recall: {np.mean(recall):.5f} F1-Score: {np.mean(f1)}")
 
 
 if __name__ == "__main__":
-    train_test_model()
+    dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    dataset = "manual_sessions/Liqin proper & wrong strokes _annotated"
+    target_classes = ["correct_stroke"]
+    # target_classes = ['classRelease', 'classDepth', 'classRate', 'armsLocked', 'bodyWeight']
+    to_exclude = ['Ankle', 'Hip']  # variables to exclude
+    ignore_files = None  # ["kinect"]
+
+    ### Model parameters ###
+    learning_rate = 0.01
+    hidden_units = 128
+    batch_size = 64
+    epochs = 30
+    # Loss function
+    loss_func = F.binary_cross_entropy  # use this loss only when class is binary
+    # loss_func = F.mse_loss
+
+    save_model_to = "models/kfold/lstm"
+    #### Training and Testing ####
+    train_test_model_kfold(dataset=dataset, to_exclude=to_exclude, ignore_files=ignore_files, target_classes=target_classes,
+                     dev=dev, learning_rate=learning_rate, hidden_units=hidden_units,
+                     batch_size=batch_size, epochs=epochs, loss_func=loss_func, save_model_to=save_model_to)
     # online_classification("models/lstm.pt")
