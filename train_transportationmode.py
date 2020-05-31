@@ -5,7 +5,7 @@ from torchsummary import summary
 from tqdm import tqdm
 import time
 import os
-from Transportation_models import TransportationCNN
+from models.Transportation_models import TransportationCNN
 
 
 def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=None, save_every=None, dev="cpu"):
@@ -22,7 +22,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
     summary(model, (1, 13, 37), device="cpu")
     model.to(dev)
     # define optimizers and loss function
-    # weight_decay is L2 weight normalization (used in paper)
+    # weight_decay is L2 weight normalization (used in paper), but I dont know how much
     opt = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0.9)
     loss_func = nn.CrossEntropyLoss().to(dev)
     # fit the model

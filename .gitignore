@@ -144,7 +144,7 @@ test_set_broken.npy
 
 /logs
 /runs
-/models
+/models/checkpoints
 
 *.h5
 gauge.png

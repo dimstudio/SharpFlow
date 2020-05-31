@@ -170,7 +170,7 @@ def tensor_transform(df_all, res_rate, bin_size):
 
 
 def load_model(target_name):
-    filename = 'models/model_' + target_name + '.h5'
+    filename = 'models/checkpoints/model_' + target_name + '.h5'
     if os.path.isfile(filename):
         new_model = keras.models.load_model(filename)
     else:

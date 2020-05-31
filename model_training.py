@@ -1,4 +1,4 @@
-import data_helper
+from utils import data_helper
 # system imports
 import os, datetime, time
 import pickle
@@ -24,7 +24,7 @@ def store_model(the_model, path_model):
 
 
 def load_model(target_name):
-    filename = 'models/model_' + target_name + '.h5'
+    filename = 'models/checkpoints/model_' + target_name + '.h5'
     if os.path.isfile(filename):
         new_model = keras.models.load_model(filename)
     else:
@@ -62,7 +62,7 @@ def main():
     # scaler.fit() should only be done on training set and then applied to the test set
     scaler = preprocessing.MinMaxScaler(feature_range=(-1, 1))
     scaler.fit(train_set.reshape(train_set.shape[0] * train_set.shape[1], train_set.shape[2]))
-    joblib.dump(scaler, "models/scaler_" + dataset + ".pkl")
+    joblib.dump(scaler, "models/checkpoints/scaler_" + dataset + ".pkl")
     # Reshape sequences
     train_set = scaler.transform(train_set.reshape(train_set.shape[0] * train_set.shape[1], train_set.shape[2])).reshape(train_set.shape[0], train_set.shape[1], train_set.shape[2])
     validation_set = scaler.transform(validation_set.reshape(validation_set.shape[0] * validation_set.shape[1], validation_set.shape[2])).reshape(validation_set.shape[0], validation_set.shape[1], validation_set.shape[2])
