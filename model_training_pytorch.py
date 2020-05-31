@@ -9,8 +9,9 @@ from sklearn.model_selection import KFold
 import matplotlib.pyplot as plt
 import numpy as np
 import time
-import data_helper
+from utils import data_helper
 import joblib
+from models.LSTMs import MyLSTM
 
 
 def loss_batch(model, loss_func, xb, yb, opt=None):
@@ -64,7 +65,7 @@ def fit(epochs, model, loss_func, opt, train_dl, valid_dl, save_every: int = Non
                     'optimizer_state_dict': opt.state_dict(),
                     'val_loss': val_loss,
                     'train_loss': train_loss
-                }, f"models/model_epoch_{epoch}.pt")
+                }, f"models/checkpoints/model_epoch_{epoch}.pt")
 
 
 class WrappedDataLoader:
@@ -79,47 +80,6 @@ class WrappedDataLoader:
         batches = iter(self.dl)
         for b in batches:
             yield (self.func(*b))
-
-
-class MySmallLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super(MySmallLSTM, self).__init__()
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-
-        self.lstm = nn.LSTM(input_size=self.input_size, hidden_size=self.hidden_size, num_layers=1, batch_first=True)
-        self.lin = nn.Linear(in_features=self.hidden_size, out_features=output_size)
-
-    def forward(self, x):
-        out, state = self.lstm(x)
-        out = self.lin(out[:, -1, :])
-        out = torch.sigmoid(out)
-        return out
-
-
-class MyLSTM(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super(MyLSTM, self).__init__()
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.output_size = output_size
-
-        self.lstm1 = nn.LSTM(input_size=self.input_size, hidden_size=self.hidden_size, num_layers=1, batch_first=True)
-        self.lstm2 = nn.LSTM(input_size=self.hidden_size, hidden_size=self.hidden_size // 2, num_layers=1,
-                             batch_first=True)
-        self.lin1 = nn.Linear(in_features=self.hidden_size // 2, out_features=self.hidden_size // 4)
-        self.lin2 = nn.Linear(in_features=self.hidden_size // 4, out_features=self.output_size)
-
-    def forward(self, x):
-        out, state = self.lstm1(x)
-        out, state = self.lstm2(out)
-        # Only take the last state of the second LSTM
-        out = self.lin1(out[:, -1, :])
-        out = torch.sigmoid(out)
-        out = self.lin2(out)
-        out = torch.sigmoid(out)
-        return out
 
 
 def load_train_data(train_folder, train_valid_split=0.7, to_exclude=None, ignore_files=None, target_classes=None,
@@ -279,7 +239,7 @@ def acc_prec_rec_modules(model, test_dl):
         return acc.squeeze(), prec.squeeze(), recall.squeeze()
 
 
-def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=64, save_model_to='models/lstm',
+def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=64, save_model_to='models/checkpoints/lstm',
                 train_folder=None, to_exclude=None, ignore_files=None, target_classes=None, device="cpu"):
     ### Load Data
     train_dl, valid_dl, data_dim, scaler = load_train_data(train_folder=train_folder,
@@ -308,7 +268,7 @@ def train_model(epochs, hidden_units, learning_rate, loss_function, batch_size=6
     # torch.save({'state_dict': model.state_dict()}, f'{save_model_to}.pt')
 
 
-def train_model_kfold(epochs, hidden_units, learning_rate, loss_function, batch_size=64, save_model_to='models/lstm',
+def train_model_kfold(epochs, hidden_units, learning_rate, loss_function, batch_size=64, save_model_to='models/checkpoints/lstm',
                       train_folder=None, to_exclude=None, ignore_files=None, target_classes=None, device="cpu"):
     ### Load Data
     tensor_data, annotations = data_helper.get_data_from_files(train_folder, ignore_files=ignore_files, res_rate=25,
@@ -377,7 +337,7 @@ def test_model(path_to_model, test_folder=None, to_exclude=None, ignore_files=No
 
 
 def train_test_model(dataset, to_exclude, ignore_files, target_classes, dev, learning_rate, hidden_units, batch_size,
-                     epochs, loss_func, save_model_to="models/lstm"):
+                     epochs, loss_func, save_model_to="models/checkpoints/lstm"):
     if need_train_test_folder(dataset, ignore_files):
         data_helper.create_train_test_folders(data=dataset,
                                               new_folder_location=None,
@@ -408,7 +368,7 @@ def train_test_model(dataset, to_exclude, ignore_files, target_classes, dev, lea
 
 
 def train_test_model_kfold(dataset, to_exclude, ignore_files, target_classes, dev, learning_rate, hidden_units,
-                           batch_size, epochs, loss_func, save_model_to="models/lstm"):
+                           batch_size, epochs, loss_func, save_model_to="models/checkpoints/lstm"):
     if need_train_test_folder(dataset, ignore_files):
         data_helper.create_train_test_folders(data=dataset,
                                               new_folder_location=None,
@@ -483,9 +443,9 @@ if __name__ == "__main__":
     loss_func = F.binary_cross_entropy  # use this loss only when class is binary
     # loss_func = F.mse_loss
 
-    save_model_to = "models/kfold/lstm"
+    save_model_to = "models/checkpoints/kfold/lstm"
     #### Training and Testing ####
     train_test_model_kfold(dataset=dataset, to_exclude=to_exclude, ignore_files=ignore_files, target_classes=target_classes,
                      dev=dev, learning_rate=learning_rate, hidden_units=hidden_units,
                      batch_size=batch_size, epochs=epochs, loss_func=loss_func, save_model_to=save_model_to)
-    # online_classification("models/lstm.pt")
+    # online_classification("models/checkpoints/lstm.pt")
