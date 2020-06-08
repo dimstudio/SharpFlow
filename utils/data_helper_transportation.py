@@ -1,9 +1,16 @@
 import numpy as np
 import zipfile, os, json, re, time
+import csv
 from datetime import datetime
 import pandas as pd
 from pandas.io.json import json_normalize
 import pickle
+
+
+def get_samples_from_csv(sensor_csv, selfreport_csv):
+    # Accerelation-magnitude:
+    # np.sqrt(np.sum([acc_x**2, acc_y**2, acc_z**2]))
+    pass
 
 
 def create_train_test_folders(data, new_folder_location=None, train_test_ratio=0.85, to_exclude=None):
@@ -11,10 +18,30 @@ def create_train_test_folders(data, new_folder_location=None, train_test_ratio=0
         new_folder_location = data
 
     # Read in csv-files (ignore those without ID)
-    for session in os.listdir(data):
-        print("Processing session: " + session)
-        with zipfile.ZipFile(session) as z:
-            print(z)
+    dataset = dict()
+    for session_zipfile in os.listdir(data):
+        if "ID_" not in session_zipfile:
+            continue
+        print("Processing zip-file: " + session_zipfile)
+        archive = zipfile.ZipFile(os.path.join(data, session_zipfile), "r")
+        # Get sensor file and corresponding selfreport file
+        print(archive)
+        filelist = archive.infolist()
+        sensor_csv, selfreport_csv = None, None
+        for f in filelist:
+            if "_sensors" in f.filename:
+                sensor_csv = csv.reader(archive.read(f))
+            elif "_selfreport" in f.filename:
+                selfreport_csv = csv.reader(archive.read(f))
+            # NOTE it could be that there are multiple sensors and selfreports
+            if sensor_csv is not None and selfreport_csv is not None:
+                # TODO get data
+                samples = get_samples_from_csv(sensor_csv, selfreport_csv)
+                # TODO add to dataset
+                # Reset then for next session (if there are more sessions in zipfile)
+                sensor_csv, selfreport_csv = None, None
+
+
     # Go through sensors (in a range of 512 readings) and annotate the majority class of selfreport in that timewindow
     # ignore the sensors mentioned in `to_exclude`
 
@@ -51,14 +78,14 @@ def create_csv_from_MLT(mlt_file):
     # flag if we extracted the json from a zip (gets deleted afterwards)
     toDelete = False
     if "zip" in mlt_file[-4:]:
-        with zipfile.ZipFile(mlt_file) as z:
-            # Find the selfreport file
-            for f in z.infolist():
-                if "selfreport" in f.filename:
-                    extraction_destination = os.path.join(*mlt_file.split("/")[:-1])
-                    z.extract(f, path=extraction_destination)
-                    selfreport_file = os.path.join(extraction_destination, f.filename)
-                    toDelete = True
+        archive = zipfile.ZipFile(mlt_file, "r")
+        # Find the selfreport file
+        for f in archive.infolist():
+            if "selfreport" in f.filename:
+                extraction_destination = os.path.join(*mlt_file.split("/")[:-1])
+                archive.extract(f, path=extraction_destination)
+                selfreport_file = os.path.join(extraction_destination, f.filename)
+                toDelete = True
     elif "json" in mlt_file[:-4]:
         selfreport_file = mlt_file
     else:
@@ -90,4 +117,4 @@ def create_csv_from_MLT(mlt_file):
 
 if __name__ == "__main__":
     create_csv_from_MLT("../manual_sessions/blackforestMLT/ID_ddm_bighike-mountain_2020-06-02T10-40-46-094_MLT.zip")
-    # create_train_test_folders(data="../manual_sessions/")
+    # create_train_test_folders(data="../manual_sessions/blackforest")
