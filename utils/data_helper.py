@@ -138,7 +138,7 @@ def annotation_file_to_array(data, offset):
 # in case of training tensor_transformation
 def tensor_transform(df_all, df_ann, res_rate, to_exclude=None):
     if df_ann.empty or df_all.empty:
-        print("Df annotaiton or df all returned as none")
+        print("Df annotation or df all returned as none")
         return None
 
     if to_exclude is not None:

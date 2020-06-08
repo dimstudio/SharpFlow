@@ -9,6 +9,8 @@ from models.Transportation_models import TransportationCNN
 
 
 def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=None, save_every=None, dev="cpu"):
+    # If needed create dataset from session files in data_folder
+
     # get the dataloaders (with the dataset)
     train_dl, valid_dl = dataloader_transportation.get_train_valid_loader(data_dir=data_folder,
                                                                           batch_size=batch_size,
