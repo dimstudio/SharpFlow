@@ -5,12 +5,65 @@ from datetime import datetime
 import pandas as pd
 from pandas.io.json import json_normalize
 import pickle
+from io import StringIO
+from tqdm import tqdm
 
 
-def get_samples_from_csv(sensor_csv, selfreport_csv):
-    # Accerelation-magnitude:
+classes = {"Stationary": 0,
+           "Walking": 1,
+           "Running": 2,
+           "Car": 3,
+           "Train/Bus": 4,
+           "Bike": 5
+           }
+
+
+def get_samples_from_csv(sensor_data, selfreport_data):
+    # This is for fixing possible faulty first entries
+    if (selfreport_data.iloc[0] == ["Time", "Transportation_Mode", "Status"]).any():
+        selfreport_data = selfreport_data.drop(0)
+    sensor_data["Time"] = pd.to_datetime(sensor_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
+    selfreport_data["Time"] = pd.to_datetime(selfreport_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
+    window = 512
+    # Acceleration-magnitude:
     # np.sqrt(np.sum([acc_x**2, acc_y**2, acc_z**2]))
-    pass
+    current_mode = "Stationary"
+    selfreport_idx = 0
+    data = []
+    annotations = []
+    # go through list
+    for i in tqdm(range(0, len(sensor_data)-window, 64)):
+        ''' 
+        get time-window
+        check in selfreport_csv the class that overlaps most with time-window
+        write data (that is not in to_exclude) to data
+        and class to annotations
+        '''
+        selected_rows = sensor_data[i:i + window]
+        sensor_start = selected_rows.iloc[0]["Time"]
+        sensor_end = selected_rows.iloc[-1]["Time"]
+        report_start = selfreport_data.iloc[min(selfreport_idx, len(selfreport_data)-1)]["Time"]
+        report_end = selfreport_data.iloc[min(selfreport_idx+1, len(selfreport_data)-1)]["Time"]
+
+        # No overlap
+        if sensor_end < report_start:
+            annotate = classes[current_mode]
+        elif sensor_start > report_end:
+            annotate = classes[current_mode]
+            selfreport_idx += 1
+        # There is overlap
+        else:
+            if selfreport_data.iloc[selfreport_idx]["Status"] == "true":
+                current_mode = selfreport_data.iloc[selfreport_idx]["Transportation_Mode"]
+            else:
+                current_mode = "Stationary"
+            annotate = classes[current_mode]
+        annotations.append(np.array(annotate))
+        # get data (Time is unimportant)
+        data_values = selected_rows.loc[:, ~selected_rows.columns.isin(["Time"])]
+        data.append(np.array(data_values))
+
+    return np.stack(data), np.stack(annotations)
 
 
 def create_train_test_folders(data, new_folder_location=None, train_test_ratio=0.85, to_exclude=None):
@@ -18,32 +71,41 @@ def create_train_test_folders(data, new_folder_location=None, train_test_ratio=0
         new_folder_location = data
 
     # Read in csv-files (ignore those without ID)
-    dataset = dict()
+    tensor_data, annotations = None, None
     for session_zipfile in os.listdir(data):
         if "ID_" not in session_zipfile:
             continue
         print("Processing zip-file: " + session_zipfile)
         archive = zipfile.ZipFile(os.path.join(data, session_zipfile), "r")
         # Get sensor file and corresponding selfreport file
-        print(archive)
+        # print(archive)
         filelist = archive.infolist()
         sensor_csv, selfreport_csv = None, None
         for f in filelist:
             if "_sensors" in f.filename:
-                sensor_csv = csv.reader(archive.read(f))
+                sensor_csv = archive.read(f)
             elif "_selfreport" in f.filename:
-                selfreport_csv = csv.reader(archive.read(f))
+                selfreport_csv = archive.read(f)
             # NOTE it could be that there are multiple sensors and selfreports
             if sensor_csv is not None and selfreport_csv is not None:
-                # TODO get data
-                samples = get_samples_from_csv(sensor_csv, selfreport_csv)
-                # TODO add to dataset
+                # get data from files
+                print("Session:", f.filename)
+                sensor_data = pd.read_csv(StringIO(sensor_csv.decode('utf-8')))
+                selfreport_data = pd.read_csv(StringIO(selfreport_csv.decode('utf-8')),
+                                              names=["Time", "Transportation_Mode", "Status"],
+                                              skiprows=1)
+                if to_exclude is not None:
+                    sensor_data = sensor_data.loc[:, ~sensor_data.columns.isin(to_exclude)]
+                tensor_data_file, annotations_file = get_samples_from_csv(sensor_data, selfreport_data)
+                # Instantiate dataset or add to dataset
+                if tensor_data is None:
+                    tensor_data = tensor_data_file
+                    annotations = annotations_file
+                else:
+                    tensor_data = np.vstack([tensor_data, tensor_data_file])
+                    annotations = np.append(annotations, annotations_file)
                 # Reset then for next session (if there are more sessions in zipfile)
                 sensor_csv, selfreport_csv = None, None
-
-
-    # Go through sensors (in a range of 512 readings) and annotate the majority class of selfreport in that timewindow
-    # ignore the sensors mentioned in `to_exclude`
 
     # mask with train_test_ratio*len(annotations) amount of ones
     train_mask = np.zeros(len(annotations), dtype=int)
@@ -116,5 +178,12 @@ def create_csv_from_MLT(mlt_file):
 
 
 if __name__ == "__main__":
-    create_csv_from_MLT("../manual_sessions/blackforestMLT/ID_ddm_bighike-mountain_2020-06-02T10-40-46-094_MLT.zip")
-    # create_train_test_folders(data="../manual_sessions/blackforest")
+    # create_csv_from_MLT("../manual_sessions/blackforestMLT/ID_ddm_bighike-mountain_2020-06-02T10-40-46-094_MLT.zip")
+    # to_exclude requires exact sensor names. e.g. ["Acc_x", "Acc_y", "Acc_z"]
+    # create_train_test_folders(data="../manual_sessions/blackforest", to_exclude=None)
+    with open("../manual_sessions/blackforest/train/sensor_data.pkl", "rb") as f:
+        data_train = pickle.load(f)
+    print(data_train.shape)
+    with open("../manual_sessions/blackforest/test/sensor_data.pkl", "rb") as f:
+        data_test = pickle.load(f)
+    print(data_test.shape)
