@@ -9,8 +9,8 @@ def get_train_valid_loader(data_dir, batch_size, valid_size, shuffle=True, num_w
     error_msg = "[!] valid_size should be in the range [0, 1]."
     assert ((valid_size >= 0) and (valid_size <= 1)), error_msg
 
-    train_dataset = transportation_dataset(data_path=data_dir)
-    valid_dataset = transportation_dataset(data_path=data_dir)
+    train_dataset = transportation_dataset(data_path=data_dir, train=True)
+    valid_dataset = transportation_dataset(data_path=data_dir, train=True)
 
     # Split the data into training and validation set
     num_train = len(train_dataset)
@@ -37,7 +37,7 @@ def get_train_valid_loader(data_dir, batch_size, valid_size, shuffle=True, num_w
 
 
 def get_test_loader(data_dir, batch_size, num_workers=0, pin_memory=False):
-    test_dataset = transportation_dataset(data_path=data_dir)
+    test_dataset = transportation_dataset(data_path=data_dir, train=False)
     test_loader = DataLoader(test_dataset, batch_size, shuffle=False,
                              num_workers=num_workers, pin_memory=pin_memory)
     return test_loader

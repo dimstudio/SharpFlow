@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from utils import dataloader_transportation
+from utils import dataloader_transportation, data_helper_transportation
 from torchsummary import summary
 from tqdm import tqdm
 import time
@@ -8,9 +8,22 @@ import os
 from models.Transportation_models import TransportationCNN
 
 
+def need_train_test_folder(dataset):
+    # Data needs to be split into train and testing folder
+    # use the data helper function to do this
+    ann_name = "annotations.pkl"
+    sensor_name = "sensor_data.pkl"
+
+    return not os.path.isfile(f"{dataset}/train/{ann_name}") \
+           or not os.path.isfile(f"{dataset}/train/{sensor_name}") \
+           or not os.path.isfile(f"{dataset}/test/{ann_name}") \
+           or not os.path.isfile(f"{dataset}/test/{sensor_name}")
+
+
 def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=None, save_every=None, dev="cpu"):
     # If needed create dataset from session files in data_folder
-
+    if need_train_test_folder(data_folder):
+        data_helper_transportation.create_train_test_folders(data_folder, to_exclude=None)
     # get the dataloaders (with the dataset)
     train_dl, valid_dl = dataloader_transportation.get_train_valid_loader(data_dir=data_folder,
                                                                           batch_size=batch_size,
@@ -19,9 +32,9 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
                                                                           num_workers=0,
                                                                           pin_memory=True)
     # load the classification model
-    model = TransportationCNN(n_classes=5)
+    model = TransportationCNN(in_channels=6, n_classes=6)
     # Print the model and parameter count
-    summary(model, (1, 13, 37), device="cpu")
+    summary(model, (6, 512), device="cpu")
     model.to(dev)
     # define optimizers and loss function
     # weight_decay is L2 weight normalization (used in paper), but I dont know how much
@@ -41,7 +54,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
         model.train()
         train_loss = 0.0
         for i, (xb, yb) in enumerate(tqdm(train_dl, desc="Batches", leave=False)):
-        # for i, (xb, yb) in enumerate(train_dl):
+            # for i, (xb, yb) in enumerate(train_dl):
             loss = loss_func(model(xb.to(dev)), yb.to(dev))
             opt.zero_grad()
             loss.backward()
@@ -59,7 +72,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
         model.eval()
         with torch.no_grad():
             for xb, yb in tqdm(valid_dl, desc="Validation", leave=False):
-            # for xb, yb in valid_dl:
+                # for xb, yb in valid_dl:
                 loss = loss_func(model(xb.to(dev)), yb.to(dev))
                 val_loss += loss.item()
             val_loss /= len(valid_dl)
@@ -116,7 +129,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
 
 if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    train_model(data_folder="data/some_cool_data",
+    train_model(data_folder="manual_sessions/blackforest",
                 epochs=50,
                 batch_size=64,
                 learning_rate=0.01,

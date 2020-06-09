@@ -1,19 +1,33 @@
 from torch.utils.data import Dataset
 import numpy as np
+import pickle
+import os
+import torch
 
 
 class transportation_dataset(Dataset):
-    def __init__(self, data_path):
-        super(self)
+    def __init__(self, data_path, train=True):
+        # super(self)
         # Do something with the data_path
         # e.g. load it in memory
-        self.dataset = np.random.random((42, 13, 37))
+        if train:
+            data_path = os.path.join(data_path, "train")
+
+        with open(os.path.join(data_path, "sensor_data.pkl"), "rb") as f:
+            self.data = pickle.load(f)
+        with open(os.path.join(data_path, "annotations.pkl"), "rb") as f:
+            self.targets = pickle.load(f)
+
+        self.data = np.transpose(self.data, (0, 2, 1))
+
+        self.data = torch.tensor(self.data, dtype=torch.float)
+        self.targets = torch.tensor(self.targets, dtype=torch.long)
 
     def __getitem__(self, item):
         # usually input and target come from the same dataset. These are just dummy values
-        values = self.dataset[item]
-        target = np.random.randint(0, 8)
+        values = self.data[item]
+        target = self.targets[item]
         return values, target
 
     def __len__(self):
-        return len(self.dataset)
+        return len(self.targets)

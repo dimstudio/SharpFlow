@@ -67,6 +67,7 @@ def get_samples_from_csv(sensor_data, selfreport_data):
 
 
 def create_train_test_folders(data, new_folder_location=None, train_test_ratio=0.85, to_exclude=None):
+    # To exclude are sensors to exclude
     if new_folder_location is None:
         new_folder_location = data
 
