@@ -12,6 +12,8 @@ class transportation_dataset(Dataset):
         # e.g. load it in memory
         if train:
             data_path = os.path.join(data_path, "train")
+        else:
+            data_path = os.path.join(data_path, "test")
 
         with open(os.path.join(data_path, "sensor_data.pkl"), "rb") as f:
             self.data = pickle.load(f)
@@ -24,7 +26,6 @@ class transportation_dataset(Dataset):
         self.targets = torch.tensor(self.targets, dtype=torch.long)
 
     def __getitem__(self, item):
-        # usually input and target come from the same dataset. These are just dummy values
         values = self.data[item]
         target = self.targets[item]
         return values, target

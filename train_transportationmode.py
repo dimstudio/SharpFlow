@@ -1,11 +1,16 @@
 import torch
 from torch import nn
-from utils import dataloader_transportation, data_helper_transportation
+from torch.utils.data import DataLoader, random_split
+from torch.utils.data.sampler import SubsetRandomSampler
+from utils import data_helper_transportation
+from utils.dataset_transportation import transportation_dataset
 from torchsummary import summary
 from tqdm import tqdm
 import time
 import os
+import numpy as np
 from models.Transportation_models import TransportationCNN
+from sklearn.preprocessing import StandardScaler
 
 
 def need_train_test_folder(dataset):
@@ -20,17 +25,90 @@ def need_train_test_folder(dataset):
            or not os.path.isfile(f"{dataset}/test/{sensor_name}")
 
 
-def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=None, save_every=None, dev="cpu"):
+def eval_model(model, loss_func, valid_dl, dev="cpu"):
+    val_loss = 0.0
+    acc = 0.0
+    model.eval()
+    with torch.no_grad():
+        # TODO calculate other metrics
+        for xb, yb in tqdm(valid_dl, desc="Validation", leave=False):
+            # for xb, yb in valid_dl:
+            xb = xb.to(dev)
+            yb = yb.to(dev)
+            y_pred = model(xb)
+            loss = loss_func(y_pred, yb)
+            val_loss += loss.item()
+            pred_class = torch.argmax(torch.log_softmax(y_pred, dim=1), dim=1)
+            # Calculate Accuracy for all classes (including stationary)
+            # correct_pred = (pred_class == yb).float()
+            # acc += correct_pred.sum() / len(correct_pred)
+            # Calculate acc without "Stationary"
+            acc += 1.0 * torch.sum((pred_class == yb) * (yb > 0)) / torch.sum(yb > 0)
+        val_loss /= len(valid_dl)
+        acc /= len(valid_dl)
+
+    return val_loss, acc
+
+
+def get_mean_std_online(loader):
+    n_samples = 0
+    mean = torch.empty(6)
+    var = torch.empty(6)
+    for i_batch, batch_target in enumerate(loader):
+        batch = batch_target[0]
+        # Rearrange batch to be the shape of [B, C, W * H]
+        batch = batch.view(batch.size(0), batch.size(1), -1)
+        # Update total number of images
+        n_samples += batch.size(0)
+        # Compute mean and std here
+        mean += batch.mean(2).sum(0)
+        var += batch.var(2).sum(0)
+
+    mean /= n_samples
+    var /= n_samples
+    std = torch.sqrt(var)
+    return mean, std
+
+
+def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, earlystopping=None, save_every=None, dev="cpu"):
     # If needed create dataset from session files in data_folder
     if need_train_test_folder(data_folder):
         data_helper_transportation.create_train_test_folders(data_folder, to_exclude=None)
-    # get the dataloaders (with the dataset)
-    train_dl, valid_dl = dataloader_transportation.get_train_valid_loader(data_dir=data_folder,
-                                                                          batch_size=batch_size,
-                                                                          valid_size=0.1,
-                                                                          shuffle=True,
-                                                                          num_workers=0,
-                                                                          pin_memory=True)
+    # TODO load dataset
+    error_msg = "[!] valid_size should be in the range [0, 1]."
+    assert ((valid_size >= 0) and (valid_size <= 1)), error_msg
+
+    dataset = transportation_dataset(data_path=data_folder, train=True)
+    # Split the data into training and validation set
+    num_train = len(dataset)
+    split_valid = int(np.floor(valid_size * num_train))
+    split_train = num_train - split_valid
+    train_dataset, valid_dataset = random_split(dataset, [split_train, split_valid])
+    # Test dataset
+    test_dataset = transportation_dataset(data_path=data_folder, train=False)
+
+    # TODO normalize dataset (using scaler trained on training set)
+    # get mean and std of trainset (for every feature)
+    # Just loop over dataset?
+    # TODO this mean and std is over the whole dataset (train+val), but should only be from train
+    mean_train, std_train = torch.mean(train_dataset.dataset.data, dim=0), torch.std(train_dataset.dataset.data, dim=0)
+    train_dataset.dataset.data = (train_dataset.dataset.data - mean_train) / std_train
+    valid_dataset.dataset.data = (valid_dataset.dataset.data - mean_train) / std_train
+    test_dataset.data = (test_dataset.data - mean_train) / std_train
+    # get the dataloaders (with the datasets)
+    train_dl = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True,
+        num_workers=0, pin_memory=True
+    )
+    valid_dl = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True,
+        num_workers=0, pin_memory=True
+    )
+    test_dl = DataLoader(test_dataset, batch_size, shuffle=False,
+                             num_workers=0, pin_memory=True)
+
+
+
     # load the classification model
     model = TransportationCNN(in_channels=6, n_classes=6)
     # Print the model and parameter count
@@ -54,7 +132,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
         model.train()
         train_loss = 0.0
         for i, (xb, yb) in enumerate(tqdm(train_dl, desc="Batches", leave=False)):
-            # for i, (xb, yb) in enumerate(train_dl):
+        # for i, (xb, yb) in enumerate(train_dl):
             loss = loss_func(model(xb.to(dev)), yb.to(dev))
             opt.zero_grad()
             loss.backward()
@@ -68,14 +146,16 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
         # scheduler.step()
 
         # Calc validation loss
-        val_loss = 0.0
-        model.eval()
-        with torch.no_grad():
-            for xb, yb in tqdm(valid_dl, desc="Validation", leave=False):
-                # for xb, yb in valid_dl:
-                loss = loss_func(model(xb.to(dev)), yb.to(dev))
-                val_loss += loss.item()
-            val_loss /= len(valid_dl)
+        val_loss, acc = eval_model(model, loss_func, valid_dl, dev=dev)
+        # val_loss = 0.0
+        # model.eval()
+        # with torch.no_grad():
+        #     # TODO calculate other metrics
+        #     for xb, yb in tqdm(valid_dl, desc="Validation", leave=False):
+        #     # for xb, yb in valid_dl:
+        #         loss = loss_func(model(xb.to(dev)), yb.to(dev))
+        #         val_loss += loss.item()
+        #     val_loss /= len(valid_dl)
 
         # Save the model with the best validation loss
         if val_loss < best_val_loss:
@@ -99,7 +179,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
                     break
 
         print(f"Epoch: {epoch:5d}, Time: {(time.time() - start_time) / 60:.3f} min, "
-              f"Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}"
+              f"Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}, Acc: {acc:.2f}"
               f", Early stopping counter: {earlystopping_counter}/{earlystopping}" if earlystopping is not None else "")
 
         if tensorboard:
@@ -131,6 +211,6 @@ if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     train_model(data_folder="manual_sessions/blackforest",
                 epochs=50,
-                batch_size=64,
+                batch_size=1024,
                 learning_rate=0.01,
                 earlystopping=30, dev=dev)
