@@ -87,13 +87,12 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
     # Test dataset
     test_dataset = transportation_dataset(data_path=data_folder, train=False)
 
-    # TODO normalize dataset (using scaler trained on training set)
+    # normalize dataset (using scaler trained on training set)
     # get mean and std of trainset (for every feature)
-    # Just loop over dataset?
-    # TODO this mean and std is over the whole dataset (train+val), but should only be from train
-    mean_train, std_train = torch.mean(train_dataset.dataset.data, dim=0), torch.std(train_dataset.dataset.data, dim=0)
-    train_dataset.dataset.data = (train_dataset.dataset.data - mean_train) / std_train
-    valid_dataset.dataset.data = (valid_dataset.dataset.data - mean_train) / std_train
+    mean_train = torch.mean(train_dataset.dataset.data[train_dataset.indices], dim=0)
+    std_train = torch.std(train_dataset.dataset.data[train_dataset.indices], dim=0)
+    train_dataset.dataset.data[train_dataset.indices] = (train_dataset.dataset.data[train_dataset.indices] - mean_train) / std_train
+    valid_dataset.dataset.data[valid_dataset.indices] = (valid_dataset.dataset.data[valid_dataset.indices] - mean_train) / std_train
     test_dataset.data = (test_dataset.data - mean_train) / std_train
     # get the dataloaders (with the datasets)
     train_dl = DataLoader(
