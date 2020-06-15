@@ -34,10 +34,10 @@ def get_samples_from_csv(sensor_data, selfreport_data):
     # go through list
     for i in tqdm(range(0, len(sensor_data)-window, 64)):
         ''' 
-        get time-window
-        check in selfreport_csv the class that overlaps most with time-window
-        write data (that is not in to_exclude) to data
-        and class to annotations
+        1. get time-window
+        2. check in selfreport_csv the class that overlaps most with time-window
+        3. write data (that is not in to_exclude) to data
+            and class to annotations
         '''
         selected_rows = sensor_data[i:i + window]
         sensor_start = selected_rows.iloc[0]["Time"]
@@ -53,13 +53,13 @@ def get_samples_from_csv(sensor_data, selfreport_data):
             selfreport_idx += 1
         # There is overlap
         else:
-            if selfreport_data.iloc[selfreport_idx]["Status"] == "true":
+            if selfreport_data.iloc[selfreport_idx]["Status"] == "true" or selfreport_data.iloc[selfreport_idx]["Status"] == True:
                 current_mode = selfreport_data.iloc[selfreport_idx]["Transportation_Mode"]
             else:
                 current_mode = "Stationary"
             annotate = classes[current_mode]
-        annotations.append(np.array(annotate))
-        # get data (Time is unimportant)
+        annotations.append(annotate)
+        # get data and ignore time (Time is unimportant)
         data_values = selected_rows.loc[:, ~selected_rows.columns.isin(["Time"])]
         data.append(np.array(data_values))
 
@@ -181,7 +181,7 @@ def create_csv_from_MLT(mlt_file):
 if __name__ == "__main__":
     # create_csv_from_MLT("../manual_sessions/blackforestMLT/ID_ddm_bighike-mountain_2020-06-02T10-40-46-094_MLT.zip")
     # to_exclude requires exact sensor names. e.g. ["Acc_x", "Acc_y", "Acc_z"]
-    # create_train_test_folders(data="../manual_sessions/blackforest", to_exclude=None)
+    create_train_test_folders(data="../manual_sessions/blackforest", to_exclude=None)
     with open("../manual_sessions/blackforest/train/sensor_data.pkl", "rb") as f:
         data_train = pickle.load(f)
     print(data_train.shape)

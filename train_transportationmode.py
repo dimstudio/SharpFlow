@@ -40,10 +40,10 @@ def eval_model(model, loss_func, valid_dl, dev="cpu"):
             val_loss += loss.item()
             pred_class = torch.argmax(torch.log_softmax(y_pred, dim=1), dim=1)
             # Calculate Accuracy for all classes (including stationary)
-            # correct_pred = (pred_class == yb).float()
-            # acc += correct_pred.sum() / len(correct_pred)
+            correct_pred = (pred_class == yb).float()
+            acc += correct_pred.sum() / len(correct_pred)
             # Calculate acc without "Stationary"
-            acc += 1.0 * torch.sum((pred_class == yb) * (yb > 0)) / torch.sum(yb > 0)
+            # acc += 1.0 * torch.sum((pred_class == yb) * (yb > 0)) / torch.sum(yb > 0)
         val_loss /= len(valid_dl)
         acc /= len(valid_dl)
 
@@ -74,10 +74,10 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
     # If needed create dataset from session files in data_folder
     if need_train_test_folder(data_folder):
         data_helper_transportation.create_train_test_folders(data_folder, to_exclude=None)
-    # TODO load dataset
     error_msg = "[!] valid_size should be in the range [0, 1]."
     assert ((valid_size >= 0) and (valid_size <= 1)), error_msg
 
+    # load dataset
     dataset = transportation_dataset(data_path=data_folder, train=True)
     # Split the data into training and validation set
     num_train = len(dataset)
@@ -123,7 +123,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
 
     if tensorboard:
         from torch.utils.tensorboard import SummaryWriter
-        writer = SummaryWriter(comment=f"precip_{model.__class__.__name__}")
+        writer = SummaryWriter(comment=f"transportation_{model.__class__.__name__}")
     start_time = time.time()
     best_val_loss = 1e300
     earlystopping_counter = 0
@@ -146,15 +146,6 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
 
         # Calc validation loss
         val_loss, acc = eval_model(model, loss_func, valid_dl, dev=dev)
-        # val_loss = 0.0
-        # model.eval()
-        # with torch.no_grad():
-        #     # TODO calculate other metrics
-        #     for xb, yb in tqdm(valid_dl, desc="Validation", leave=False):
-        #     # for xb, yb in valid_dl:
-        #         loss = loss_func(model(xb.to(dev)), yb.to(dev))
-        #         val_loss += loss.item()
-        #     val_loss /= len(valid_dl)
 
         # Save the model with the best validation loss
         if val_loss < best_val_loss:
