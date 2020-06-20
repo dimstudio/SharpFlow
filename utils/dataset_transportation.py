@@ -20,6 +20,7 @@ class transportation_dataset(Dataset):
         with open(os.path.join(data_path, "annotations.pkl"), "rb") as f:
             self.targets = pickle.load(f)
 
+        self.use_magnitude = use_magnitude
         if not use_magnitude:
             self.data = np.transpose(self.data, (0, 2, 1))
 
@@ -29,6 +30,8 @@ class transportation_dataset(Dataset):
     def __getitem__(self, item):
         values = self.data[item]
         target = self.targets[item]
+        if self.use_magnitude:
+            values = np.expand_dims(values, 0)
         return values, target
 
     def __len__(self):

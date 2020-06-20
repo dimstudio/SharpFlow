@@ -78,14 +78,14 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
     assert ((valid_size >= 0) and (valid_size <= 1)), error_msg
 
     # load dataset
-    dataset = transportation_dataset(data_path=data_folder, train=True)
+    dataset = transportation_dataset(data_path=data_folder, train=True, use_magnitude=True)
     # Split the data into training and validation set
     num_train = len(dataset)
     split_valid = int(np.floor(valid_size * num_train))
     split_train = num_train - split_valid
     train_dataset, valid_dataset = random_split(dataset, [split_train, split_valid])
     # Test dataset
-    test_dataset = transportation_dataset(data_path=data_folder, train=False)
+    test_dataset = transportation_dataset(data_path=data_folder, train=False, use_magnitude=True)
 
     # normalize dataset (using scaler trained on training set)
     # get mean and std of trainset (for every feature)
@@ -109,13 +109,13 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
 
 
     # load the classification model
-    model = TransportationCNN(in_channels=6, n_classes=6)
+    model = TransportationCNN(in_channels=1, n_classes=6)
     # Print the model and parameter count
-    summary(model, (6, 512), device="cpu")
+    summary(model, (1, 512), device="cpu")
     model.to(dev)
     # define optimizers and loss function
     # weight_decay is L2 weight normalization (used in paper), but I dont know how much
-    opt = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0.9)
+    opt = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0.001)
     loss_func = nn.CrossEntropyLoss().to(dev)
     # fit the model
     tensorboard = False
@@ -199,7 +199,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
 
 if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    train_model(data_folder="manual_sessions/blackforest",
+    train_model(data_folder="manual_sessions/blackforest/acc_magnitude",
                 epochs=50,
                 batch_size=1024,
                 learning_rate=0.01,
