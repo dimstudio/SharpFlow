@@ -7,6 +7,9 @@ from pandas.io.json import json_normalize
 import pickle
 from io import StringIO
 from tqdm import tqdm
+from numba import jit
+from numba.typed import Dict
+from numba.core import types
 
 
 classes = {"Stationary": 0,
@@ -16,6 +19,81 @@ classes = {"Stationary": 0,
            "Train/Bus": 4,
            "Bike": 5
            }
+classes_numba = Dict.empty(
+    key_type=types.string,
+    value_type=types.int64
+)
+for key, val in classes.items():
+    classes_numba[key] = val
+
+
+def get_samples_from_csv_acc_magnitude(sensor_data, selfreport_data):
+    # This is for fixing possible faulty first entries
+    if (selfreport_data.iloc[0] == ["Time", "Transportation_Mode", "Status"]).any():
+        selfreport_data = selfreport_data.drop(0)
+    sensor_data["Time"] = pd.to_datetime(sensor_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
+    selfreport_data["Time"] = pd.to_datetime(selfreport_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
+    window = 512
+
+    # Get only acc data
+    acc_data = sensor_data[["Acc_x", "Acc_y", "Acc_z"]].values
+
+    @jit(nopython=True)
+    def calc_magnitude_numba(acc_data):
+        grav = np.zeros(acc_data.shape)
+        grav[0] = acc_data[0]
+        magnitude = np.zeros(len(acc_data))
+        for i, val in enumerate(acc_data[1:]):
+            # remove gravity: Grx_k = 0.8 * Grx_k-1 + (1-0.8)*Accx_k
+            #  Lx_k = Accx_k - Grx_k
+            grav[i+1] = 0.8 * grav[i] + 0.2*val
+            lin_acc = val - grav[i+1]
+            # TODO apply smoothing
+            # Acceleration-magnitude:
+            # np.sqrt(np.sum([acc_x**2, acc_y**2, acc_z**2]))
+            magnitude[i+1] = np.sqrt(np.sum(lin_acc**2))
+        return magnitude
+
+    magnitude = calc_magnitude_numba(acc_data)
+
+    current_mode = "Stationary"
+    selfreport_idx = 0
+    data = np.zeros((len(range(0, len(sensor_data)-window, 64)), window))
+    annotations = np.zeros(len(range(0, len(sensor_data)-window, 64)))
+    # go through list
+    for ind, i in enumerate(tqdm(range(0, len(sensor_data)-window, 64))):
+        ''' 
+        1. get time-window
+        2. check in selfreport_csv the class that overlaps most with time-window
+        3. write data (that is not in to_exclude) to data
+            and class to annotations
+        '''
+        selected_rows = sensor_data[i:i + window]
+        sensor_start = selected_rows.iloc[0]["Time"]
+        sensor_end = selected_rows.iloc[-1]["Time"]
+        report_start = selfreport_data.iloc[min(selfreport_idx, len(selfreport_data)-1)]["Time"]
+        report_end = selfreport_data.iloc[min(selfreport_idx+1, len(selfreport_data)-1)]["Time"]
+
+        # No overlap
+        if sensor_end < report_start:
+            annotate = classes[current_mode]
+        elif sensor_start > report_end:
+            annotate = classes[current_mode]
+            selfreport_idx += 1
+        # There is overlap
+        else:
+            if selfreport_data.iloc[selfreport_idx]["Status"] == "true" or selfreport_data.iloc[selfreport_idx]["Status"] == True:
+                current_mode = selfreport_data.iloc[selfreport_idx]["Transportation_Mode"]
+            else:
+                current_mode = "Stationary"
+            annotate = classes[current_mode]
+        annotations[ind] = annotate
+        # get data and ignore time (Time is unimportant)
+        data_values = magnitude[i:i+window]
+        # data_values = selected_rows.loc[:, ~selected_rows.columns.isin(["Time"])]
+        data[ind] = data_values
+
+    return np.stack(data), np.stack(annotations)
 
 
 def get_samples_from_csv(sensor_data, selfreport_data):
@@ -25,8 +103,6 @@ def get_samples_from_csv(sensor_data, selfreport_data):
     sensor_data["Time"] = pd.to_datetime(sensor_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
     selfreport_data["Time"] = pd.to_datetime(selfreport_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
     window = 512
-    # Acceleration-magnitude:
-    # np.sqrt(np.sum([acc_x**2, acc_y**2, acc_z**2]))
     current_mode = "Stationary"
     selfreport_idx = 0
     data = []
@@ -66,10 +142,12 @@ def get_samples_from_csv(sensor_data, selfreport_data):
     return np.stack(data), np.stack(annotations)
 
 
-def create_train_test_folders(data, new_folder_location=None, train_test_ratio=0.85, to_exclude=None):
+def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_exclude=None, acc_magnitude=False):
     # To exclude are sensors to exclude
-    if new_folder_location is None:
-        new_folder_location = data
+    if sub_folder is None:
+        sub_folder = data
+    else:
+        sub_folder = os.path.join(data, sub_folder)
 
     # Read in csv-files (ignore those without ID)
     tensor_data, annotations = None, None
@@ -97,7 +175,10 @@ def create_train_test_folders(data, new_folder_location=None, train_test_ratio=0
                                               skiprows=1)
                 if to_exclude is not None:
                     sensor_data = sensor_data.loc[:, ~sensor_data.columns.isin(to_exclude)]
-                tensor_data_file, annotations_file = get_samples_from_csv(sensor_data, selfreport_data)
+                if acc_magnitude:
+                    tensor_data_file, annotations_file = get_samples_from_csv_acc_magnitude(sensor_data, selfreport_data)
+                else:
+                    tensor_data_file, annotations_file = get_samples_from_csv(sensor_data, selfreport_data)
                 # Instantiate dataset or add to dataset
                 if tensor_data is None:
                     tensor_data = tensor_data_file
@@ -122,16 +203,17 @@ def create_train_test_folders(data, new_folder_location=None, train_test_ratio=0
     ann_name = "annotations.pkl"
     sensor_name = "sensor_data.pkl"
 
-    os.makedirs(f'{new_folder_location}/train', exist_ok=True)
-    with open(f'{new_folder_location}/train/{ann_name}', "wb") as f:
+    # Save the annotation and sensor data
+    os.makedirs(f'{sub_folder}/train', exist_ok=True)
+    with open(f'{sub_folder}/train/{ann_name}', "wb") as f:
         pickle.dump(train_annotations, f)
-    with open(f'{new_folder_location}/train/{sensor_name}', "wb") as f:
+    with open(f'{sub_folder}/train/{sensor_name}', "wb") as f:
         pickle.dump(train_sensor_data, f)
 
-    os.makedirs(f'{new_folder_location}/test', exist_ok=True)
-    with open(f'{new_folder_location}/test/{ann_name}', "wb") as f:
+    os.makedirs(f'{sub_folder}/test', exist_ok=True)
+    with open(f'{sub_folder}/test/{ann_name}', "wb") as f:
         pickle.dump(test_annotations, f)
-    with open(f'{new_folder_location}/test/{sensor_name}', "wb") as f:
+    with open(f'{sub_folder}/test/{sensor_name}', "wb") as f:
         pickle.dump(test_sensor_data, f)
 
 
@@ -181,10 +263,11 @@ def create_csv_from_MLT(mlt_file):
 if __name__ == "__main__":
     # create_csv_from_MLT("../manual_sessions/blackforestMLT/ID_ddm_bighike-mountain_2020-06-02T10-40-46-094_MLT.zip")
     # to_exclude requires exact sensor names. e.g. ["Acc_x", "Acc_y", "Acc_z"]
-    create_train_test_folders(data="../manual_sessions/blackforest", to_exclude=None)
-    with open("../manual_sessions/blackforest/train/sensor_data.pkl", "rb") as f:
+    # to_exclude = ["Gyro_x", "Gyro_y", "Gyro_z"]
+    create_train_test_folders(data="../manual_sessions/blackforest", sub_folder="Acc_magnitude", to_exclude=None, acc_magnitude=True)
+    with open("../manual_sessions/blackforest/Acc_magnitude/train/sensor_data.pkl", "rb") as f:
         data_train = pickle.load(f)
     print(data_train.shape)
-    with open("../manual_sessions/blackforest/test/sensor_data.pkl", "rb") as f:
+    with open("../manual_sessions/blackforest/Acc_magnitude/test/sensor_data.pkl", "rb") as f:
         data_test = pickle.load(f)
     print(data_test.shape)

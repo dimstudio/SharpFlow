@@ -6,7 +6,7 @@ import torch
 
 
 class transportation_dataset(Dataset):
-    def __init__(self, data_path, train=True):
+    def __init__(self, data_path, train=True, use_magnitude=False):
         # super(self)
         # Do something with the data_path
         # e.g. load it in memory
@@ -20,7 +20,8 @@ class transportation_dataset(Dataset):
         with open(os.path.join(data_path, "annotations.pkl"), "rb") as f:
             self.targets = pickle.load(f)
 
-        self.data = np.transpose(self.data, (0, 2, 1))
+        if not use_magnitude:
+            self.data = np.transpose(self.data, (0, 2, 1))
 
         self.data = torch.tensor(self.data, dtype=torch.float)
         self.targets = torch.tensor(self.targets, dtype=torch.long)
