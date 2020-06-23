@@ -10,6 +10,7 @@ from tqdm import tqdm
 from numba import jit
 from numba.typed import Dict
 from numba.core import types
+import re
 
 
 classes = {"Stationary": 0,
@@ -19,87 +20,66 @@ classes = {"Stationary": 0,
            "Train/Bus": 4,
            "Bike": 5
            }
-classes_numba = Dict.empty(
-    key_type=types.string,
-    value_type=types.int64
-)
-for key, val in classes.items():
-    classes_numba[key] = val
 
 
-def get_samples_from_csv_acc_magnitude(sensor_data, selfreport_data):
-    # This is for fixing possible faulty first entries
-    if (selfreport_data.iloc[0] == ["Time", "Transportation_Mode", "Status"]).any():
-        selfreport_data = selfreport_data.drop(0)
-    sensor_data["Time"] = pd.to_datetime(sensor_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
-    selfreport_data["Time"] = pd.to_datetime(selfreport_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
+@jit(nopython=True)
+def get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status):
     window = 512
 
-    # Get only acc data
-    acc_data = sensor_data[["Acc_x", "Acc_y", "Acc_z"]].values
+    grav = np.zeros(acc_data.shape)
+    grav[0] = acc_data[0]
+    magnitude = np.zeros(len(acc_data))
+    for i, val in enumerate(acc_data[1:]):
+        # remove gravity: Grx_k = 0.8 * Grx_k-1 + (1-0.8)*Accx_k
+        #  Lx_k = Accx_k - Grx_k
+        grav[i+1] = 0.8 * grav[i] + 0.2*val
+        lin_acc = val - grav[i+1]
+        # TODO apply smoothing
+        # Acceleration-magnitude:
+        # np.sqrt(np.sum([acc_x**2, acc_y**2, acc_z**2]))
+        magnitude[i+1] = np.sqrt(np.sum(lin_acc**2))
 
-    @jit(nopython=True)
-    def calc_magnitude_numba(acc_data):
-        grav = np.zeros(acc_data.shape)
-        grav[0] = acc_data[0]
-        magnitude = np.zeros(len(acc_data))
-        for i, val in enumerate(acc_data[1:]):
-            # remove gravity: Grx_k = 0.8 * Grx_k-1 + (1-0.8)*Accx_k
-            #  Lx_k = Accx_k - Grx_k
-            grav[i+1] = 0.8 * grav[i] + 0.2*val
-            lin_acc = val - grav[i+1]
-            # TODO apply smoothing
-            # Acceleration-magnitude:
-            # np.sqrt(np.sum([acc_x**2, acc_y**2, acc_z**2]))
-            magnitude[i+1] = np.sqrt(np.sum(lin_acc**2))
-        return magnitude
-
-    magnitude = calc_magnitude_numba(acc_data)
-
-    current_mode = "Stationary"
+    current_mode = 0
     selfreport_idx = 0
-    data = np.zeros((len(range(0, len(sensor_data)-window, 64)), window))
-    annotations = np.zeros(len(range(0, len(sensor_data)-window, 64)))
+    data = np.zeros((len(range(0, len(sensor_times)-window, 64)), window))
+    annotations = np.zeros(len(range(0, len(sensor_times)-window, 64)))
     # go through list
-    for ind, i in enumerate(tqdm(range(0, len(sensor_data)-window, 64))):
+    for ind, i in enumerate(range(0, len(sensor_times)-window, 64)):
         ''' 
         1. get time-window
         2. check in selfreport_csv the class that overlaps most with time-window
         3. write data (that is not in to_exclude) to data
             and class to annotations
         '''
-        selected_rows = sensor_data[i:i + window]
-        sensor_start = selected_rows.iloc[0]["Time"]
-        sensor_end = selected_rows.iloc[-1]["Time"]
-        report_start = selfreport_data.iloc[min(selfreport_idx, len(selfreport_data)-1)]["Time"]
-        report_end = selfreport_data.iloc[min(selfreport_idx+1, len(selfreport_data)-1)]["Time"]
+        selected_rows = sensor_times[i:i + window]
+        sensor_start = selected_rows[0]
+        sensor_end = selected_rows[-1]
+        report_start = selfreport_times[min(selfreport_idx, len(selfreport_times)-1)]
+        report_end = selfreport_times[min(selfreport_idx+1, len(selfreport_times)-1)]
 
         # No overlap
         if sensor_end < report_start:
-            annotate = classes[current_mode]
+            annotate = current_mode
         elif sensor_start > report_end:
-            annotate = classes[current_mode]
+            annotate = current_mode
             selfreport_idx += 1
         # There is overlap
         else:
-            if selfreport_data.iloc[selfreport_idx]["Status"] == "true" or selfreport_data.iloc[selfreport_idx]["Status"] == True:
-                current_mode = selfreport_data.iloc[selfreport_idx]["Transportation_Mode"]
+            if selfreport_status[selfreport_idx]:
+                current_mode = selfreport_mode[selfreport_idx]
             else:
-                current_mode = "Stationary"
-            annotate = classes[current_mode]
+                current_mode = 0
+            annotate = current_mode
         annotations[ind] = annotate
         # get data and ignore time (Time is unimportant)
         data_values = magnitude[i:i+window]
         # data_values = selected_rows.loc[:, ~selected_rows.columns.isin(["Time"])]
         data[ind] = data_values
 
-    return np.stack(data), np.stack(annotations)
+    return data, annotations
 
 
 def get_samples_from_csv(sensor_data, selfreport_data):
-    # This is for fixing possible faulty first entries
-    if (selfreport_data.iloc[0] == ["Time", "Transportation_Mode", "Status"]).any():
-        selfreport_data = selfreport_data.drop(0)
     sensor_data["Time"] = pd.to_datetime(sensor_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
     selfreport_data["Time"] = pd.to_datetime(selfreport_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
     window = 512
@@ -175,8 +155,21 @@ def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_e
                                               skiprows=1)
                 if to_exclude is not None:
                     sensor_data = sensor_data.loc[:, ~sensor_data.columns.isin(to_exclude)]
+                # This is for fixing possible faulty first entries
+                if (selfreport_data.iloc[0] == ["Time", "Transportation_Mode", "Status"]).any():
+                    selfreport_data = selfreport_data.drop(0)
                 if acc_magnitude:
-                    tensor_data_file, annotations_file = get_samples_from_csv_acc_magnitude(sensor_data, selfreport_data)
+                    # convert pandas DF to numpy and apply numba
+                    sensor_times = pd.to_datetime(sensor_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f").values.astype(np.int64) // 10 ** 9
+                    selfreport_times = pd.to_datetime(selfreport_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f").values.astype(np.int64) // 10 ** 9
+                    acc_data = sensor_data[["Acc_x", "Acc_y", "Acc_z"]].values
+                    selfreport_mode = selfreport_data["Transportation_Mode"].values
+                    selfreport_mode = np.array([classes[mode] for mode in selfreport_mode])
+                    # "Status" is sometimes boolean and sometimes a string with "true" or "false"
+                    selfreport_status = selfreport_data["Status"].values
+                    tensor_data_file, annotations_file = get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status)
+                    tensor_data_file = np.stack(tensor_data_file)
+                    annotations_file = np.stack(annotations_file)
                 else:
                     tensor_data_file, annotations_file = get_samples_from_csv(sensor_data, selfreport_data)
                 # Instantiate dataset or add to dataset
@@ -221,6 +214,7 @@ def create_csv_from_MLT(mlt_file):
     # if mlt_file ends with zip: open and get _selfreport.json
     # else: assume its _selfreport.json
     # flag if we extracted the json from a zip (gets deleted afterwards)
+    print("Filename:", mlt_file)
     toDelete = False
     if "zip" in mlt_file[-4:]:
         archive = zipfile.ZipFile(mlt_file, "r")
@@ -231,7 +225,7 @@ def create_csv_from_MLT(mlt_file):
                 archive.extract(f, path=extraction_destination)
                 selfreport_file = os.path.join(extraction_destination, f.filename)
                 toDelete = True
-    elif "json" in mlt_file[:-4]:
+    elif "json" in mlt_file[-4:]:
         selfreport_file = mlt_file
     else:
         raise FileNotFoundError("Unkown file name")
@@ -246,7 +240,15 @@ def create_csv_from_MLT(mlt_file):
         # read in json file
         with open(selfreport_file, "r") as f:
             selfreport_json = json.load(f)
-        record_start_time = datetime.strptime(selfreport_json["recordingID"], "%Y-%m-%dT%H-%M-%S-%f")
+        # extract the time via regex
+        # time we are looking for: 2020-06-02T10-40-46-094
+        p = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{3}")
+        m = p.findall(selfreport_json["recordingID"])
+        if len(m) > 0:
+            print('Match found: ', m[0])
+        else:
+            print('No match')
+        record_start_time = datetime.strptime(m[0], "%Y-%m-%dT%H-%M-%S-%f")
         for interval in selfreport_json["intervals"]:
             start_time = datetime.strptime(interval["start"], "%H:%M:%S.%f") - datetime.strptime("00:00", "%H:%M")
             end_time = datetime.strptime(interval["end"], "%H:%M:%S.%f") - datetime.strptime("00:00", "%H:%M")
@@ -261,13 +263,18 @@ def create_csv_from_MLT(mlt_file):
 
 
 if __name__ == "__main__":
+    # folder = "../manual_sessions/blackforest-correct-annotations"
+    # for fileToCorrect in os.listdir(folder):
+    #     create_csv_from_MLT(os.path.join(folder, fileToCorrect))
     # create_csv_from_MLT("../manual_sessions/blackforestMLT/ID_ddm_bighike-mountain_2020-06-02T10-40-46-094_MLT.zip")
+
+    folder = "../manual_sessions/blackforest_cleaner_annotations"
     # to_exclude requires exact sensor names. e.g. ["Acc_x", "Acc_y", "Acc_z"]
     # to_exclude = ["Gyro_x", "Gyro_y", "Gyro_z"]
-    create_train_test_folders(data="../manual_sessions/blackforest", sub_folder="Acc_magnitude", to_exclude=None, acc_magnitude=True)
-    with open("../manual_sessions/blackforest/Acc_magnitude/train/sensor_data.pkl", "rb") as f:
+    create_train_test_folders(data=folder, sub_folder="Acc_magnitude", to_exclude=None, acc_magnitude=True)
+    with open(os.path.join(folder, "Acc_magnitude/train/sensor_data.pkl"), "rb") as f:
         data_train = pickle.load(f)
     print(data_train.shape)
-    with open("../manual_sessions/blackforest/Acc_magnitude/test/sensor_data.pkl", "rb") as f:
+    with open(os.path.join(folder, "Acc_magnitude/test/sensor_data.pkl"), "rb") as f:
         data_test = pickle.load(f)
     print(data_test.shape)

@@ -18,7 +18,7 @@ if __name__ == "__main__":
     start_time = time.time()
     # apply sklearn
     # Create the model with 100 trees
-    model = RandomForestClassifier(n_estimators=100,
+    model = RandomForestClassifier(n_estimators=10,
                                    bootstrap=True,
                                    max_features='sqrt')
     # Fit on training data
@@ -32,5 +32,5 @@ if __name__ == "__main__":
         targets_test = pickle.load(f)
     rf_predictions = model.predict(data_test)
     rf_probs = model.predict_proba(data_test)
-    roc_value = roc_auc_score(targets_test, rf_probs, multi_class="ovo")
+    roc_value = roc_auc_score(targets_test, rf_probs, multi_class="ovr")
     print("ROC_AUC: ", roc_value)
