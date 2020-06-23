@@ -18,7 +18,7 @@ classes = {"Stationary": 0,
            "Running": 2,
            "Car": 3,
            "Train/Bus": 4,
-           "Bike": 5
+           "Biking": 5
            }
 
 
@@ -155,6 +155,9 @@ def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_e
                                               skiprows=1)
                 if to_exclude is not None:
                     sensor_data = sensor_data.loc[:, ~sensor_data.columns.isin(to_exclude)]
+                if len(selfreport_data) == 0:
+                    sensor_csv, selfreport_csv = None, None
+                    continue
                 # This is for fixing possible faulty first entries
                 if (selfreport_data.iloc[0] == ["Time", "Transportation_Mode", "Status"]).any():
                     selfreport_data = selfreport_data.drop(0)
@@ -268,13 +271,14 @@ if __name__ == "__main__":
     #     create_csv_from_MLT(os.path.join(folder, fileToCorrect))
     # create_csv_from_MLT("../manual_sessions/blackforestMLT/ID_ddm_bighike-mountain_2020-06-02T10-40-46-094_MLT.zip")
 
-    folder = "../manual_sessions/blackforest_cleaner_annotations"
+    folder = "../manual_sessions/all_data"
+    sub_folder = "acc_magnitude"
     # to_exclude requires exact sensor names. e.g. ["Acc_x", "Acc_y", "Acc_z"]
     # to_exclude = ["Gyro_x", "Gyro_y", "Gyro_z"]
-    create_train_test_folders(data=folder, sub_folder="Acc_magnitude", to_exclude=None, acc_magnitude=True)
-    with open(os.path.join(folder, "Acc_magnitude/train/sensor_data.pkl"), "rb") as f:
+    create_train_test_folders(data=folder, sub_folder=sub_folder, to_exclude=None, acc_magnitude=True)
+    with open(os.path.join(folder, f"{sub_folder}/train/sensor_data.pkl"), "rb") as f:
         data_train = pickle.load(f)
     print(data_train.shape)
-    with open(os.path.join(folder, "Acc_magnitude/test/sensor_data.pkl"), "rb") as f:
+    with open(os.path.join(folder, f"{sub_folder}/test/sensor_data.pkl"), "rb") as f:
         data_test = pickle.load(f)
     print(data_test.shape)
