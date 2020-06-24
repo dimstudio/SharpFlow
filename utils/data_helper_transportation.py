@@ -11,6 +11,7 @@ from numba import jit
 from numba.typed import Dict
 from numba.core import types
 import re
+from scipy.signal import savgol_filter
 
 
 classes = {"Stationary": 0,
@@ -35,6 +36,7 @@ def get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_
         grav[i+1] = 0.8 * grav[i] + 0.2*val
         lin_acc = val - grav[i+1]
         # TODO apply smoothing
+        # lin_acc = savgol_filter(lin_acc, window_length=5, polyorder=2)
         # Acceleration-magnitude:
         # np.sqrt(np.sum([acc_x**2, acc_y**2, acc_z**2]))
         magnitude[i+1] = np.sqrt(np.sum(lin_acc**2))
@@ -79,47 +81,45 @@ def get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_
     return data, annotations
 
 
-def get_samples_from_csv(sensor_data, selfreport_data):
-    sensor_data["Time"] = pd.to_datetime(sensor_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
-    selfreport_data["Time"] = pd.to_datetime(selfreport_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f")
+def get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status):
     window = 512
-    current_mode = "Stationary"
+    current_mode = 0
     selfreport_idx = 0
     data = []
     annotations = []
     # go through list
-    for i in tqdm(range(0, len(sensor_data)-window, 64)):
+    for i in range(0, len(sensor_times)-window, 64):
         ''' 
         1. get time-window
         2. check in selfreport_csv the class that overlaps most with time-window
         3. write data (that is not in to_exclude) to data
             and class to annotations
         '''
-        selected_rows = sensor_data[i:i + window]
-        sensor_start = selected_rows.iloc[0]["Time"]
-        sensor_end = selected_rows.iloc[-1]["Time"]
-        report_start = selfreport_data.iloc[min(selfreport_idx, len(selfreport_data)-1)]["Time"]
-        report_end = selfreport_data.iloc[min(selfreport_idx+1, len(selfreport_data)-1)]["Time"]
+        selected_rows = sensor_times[i:i + window]
+        sensor_start = selected_rows[0]
+        sensor_end = selected_rows[-1]
+        report_start = selfreport_times[min(selfreport_idx, len(selfreport_times)-1)]
+        report_end = selfreport_times[min(selfreport_idx+1, len(selfreport_times)-1)]
 
         # No overlap
         if sensor_end < report_start:
-            annotate = classes[current_mode]
+            annotate = current_mode
         elif sensor_start > report_end:
-            annotate = classes[current_mode]
+            annotate = current_mode
             selfreport_idx += 1
         # There is overlap
         else:
-            if selfreport_data.iloc[selfreport_idx]["Status"] == "true" or selfreport_data.iloc[selfreport_idx]["Status"] == True:
-                current_mode = selfreport_data.iloc[selfreport_idx]["Transportation_Mode"]
+            if selfreport_status[selfreport_idx]:
+                current_mode = selfreport_mode[selfreport_idx]
             else:
-                current_mode = "Stationary"
-            annotate = classes[current_mode]
+                current_mode = 0
+            annotate = current_mode
         annotations.append(annotate)
         # get data and ignore time (Time is unimportant)
-        data_values = selected_rows.loc[:, ~selected_rows.columns.isin(["Time"])]
+        data_values = sensor_values[i:i + window]
         data.append(np.array(data_values))
 
-    return np.stack(data), np.stack(annotations)
+    return data, annotations
 
 
 def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_exclude=None, acc_magnitude=False):
@@ -161,20 +161,24 @@ def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_e
                 # This is for fixing possible faulty first entries
                 if (selfreport_data.iloc[0] == ["Time", "Transportation_Mode", "Status"]).any():
                     selfreport_data = selfreport_data.drop(0)
+                # convert pandas DF to numpy and apply numba
+                sensor_times = pd.to_datetime(sensor_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f").values.astype(
+                    np.int64) // 10 ** 9
+                selfreport_times = pd.to_datetime(selfreport_data["Time"],
+                                                  format="%Y-%m-%dT%H:%M:%S.%f").values.astype(np.int64) // 10 ** 9
+                selfreport_mode = selfreport_data["Transportation_Mode"].values
+                selfreport_mode = np.array([classes[mode] for mode in selfreport_mode])
+                # "Status" is sometimes boolean and sometimes a string with "true" or "false"
+                selfreport_status = selfreport_data["Status"].values
                 if acc_magnitude:
-                    # convert pandas DF to numpy and apply numba
-                    sensor_times = pd.to_datetime(sensor_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f").values.astype(np.int64) // 10 ** 9
-                    selfreport_times = pd.to_datetime(selfreport_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f").values.astype(np.int64) // 10 ** 9
                     acc_data = sensor_data[["Acc_x", "Acc_y", "Acc_z"]].values
-                    selfreport_mode = selfreport_data["Transportation_Mode"].values
-                    selfreport_mode = np.array([classes[mode] for mode in selfreport_mode])
-                    # "Status" is sometimes boolean and sometimes a string with "true" or "false"
-                    selfreport_status = selfreport_data["Status"].values
                     tensor_data_file, annotations_file = get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status)
-                    tensor_data_file = np.stack(tensor_data_file)
-                    annotations_file = np.stack(annotations_file)
                 else:
-                    tensor_data_file, annotations_file = get_samples_from_csv(sensor_data, selfreport_data)
+                    # Get all sensor readings except for "Time"
+                    sensor_values = sensor_data.loc[:, ~sensor_data.columns.isin(["Time"])].values
+                    tensor_data_file, annotations_file = get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status)
+                tensor_data_file = np.stack(tensor_data_file)
+                annotations_file = np.stack(annotations_file)
                 # Instantiate dataset or add to dataset
                 if tensor_data is None:
                     tensor_data = tensor_data_file
@@ -272,13 +276,13 @@ if __name__ == "__main__":
     # create_csv_from_MLT("../manual_sessions/blackforestMLT/ID_ddm_bighike-mountain_2020-06-02T10-40-46-094_MLT.zip")
 
     folder = "../manual_sessions/all_data"
-    sub_folder = "acc_magnitude"
+    sub_folder = "all_sensors"
     # to_exclude requires exact sensor names. e.g. ["Acc_x", "Acc_y", "Acc_z"]
     # to_exclude = ["Gyro_x", "Gyro_y", "Gyro_z"]
-    create_train_test_folders(data=folder, sub_folder=sub_folder, to_exclude=None, acc_magnitude=True)
-    with open(os.path.join(folder, f"{sub_folder}/train/sensor_data.pkl"), "rb") as f:
-        data_train = pickle.load(f)
-    print(data_train.shape)
-    with open(os.path.join(folder, f"{sub_folder}/test/sensor_data.pkl"), "rb") as f:
-        data_test = pickle.load(f)
-    print(data_test.shape)
+    create_train_test_folders(data=folder, sub_folder=sub_folder, to_exclude=None, acc_magnitude=False)
+    # with open(os.path.join(folder, f"{sub_folder}/train/sensor_data.pkl"), "rb") as f:
+    #     data_train = pickle.load(f)
+    # print(data_train.shape)
+    # with open(os.path.join(folder, f"{sub_folder}/test/sensor_data.pkl"), "rb") as f:
+    #     data_test = pickle.load(f)
+    # print(data_test.shape)
