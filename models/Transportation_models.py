@@ -23,14 +23,14 @@ class ConvMaxPoolBlock(nn.Module):
 
 
 class TransportationCNN(nn.Module):
-    def __init__(self, n_classes):
+    def __init__(self, in_channels, n_classes):
         super(TransportationCNN, self).__init__()
         # Network from "A Convolutional Neural Network for Transportation Mode Detection Based on Smartphone Platform"
         # https://ieeexplore.ieee.org/abstract/document/8108764
         alpha = 0.01
 
         # (1 x 512) --> (32 x 256)
-        self.conv1 = ConvMaxPoolBlock(in_channels=1, out_channels=32, kernel_size=15, alpha=alpha)
+        self.conv1 = ConvMaxPoolBlock(in_channels=in_channels, out_channels=32, kernel_size=15, alpha=alpha)
         # next two convs have kernel size 10
         # (32 x 256) --> (64 x 128)
         self.conv2 = ConvMaxPoolBlock(in_channels=32, out_channels=64, kernel_size=10, alpha=alpha)

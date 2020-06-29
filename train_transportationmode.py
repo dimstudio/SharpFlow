@@ -1,29 +1,121 @@
 import torch
 from torch import nn
-from utils import dataloader_transportation
+from torch.utils.data import DataLoader, random_split
+from torch.utils.data.sampler import SubsetRandomSampler
+from utils import data_helper_transportation
+from utils.dataset_transportation import transportation_dataset
 from torchsummary import summary
 from tqdm import tqdm
 import time
 import os
+import numpy as np
 from models.Transportation_models import TransportationCNN
+from sklearn.preprocessing import StandardScaler
 
 
-def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=None, save_every=None, dev="cpu"):
-    # get the dataloaders (with the dataset)
-    train_dl, valid_dl = dataloader_transportation.get_train_valid_loader(data_dir=data_folder,
-                                                                          batch_size=batch_size,
-                                                                          valid_size=0.1,
-                                                                          shuffle=True,
-                                                                          num_workers=0,
-                                                                          pin_memory=True)
+def need_train_test_folder(dataset):
+    # Data needs to be split into train and testing folder
+    # use the data helper function to do this
+    ann_name = "annotations.pkl"
+    sensor_name = "sensor_data.pkl"
+
+    return not os.path.isfile(f"{dataset}/train/{ann_name}") \
+           or not os.path.isfile(f"{dataset}/train/{sensor_name}") \
+           or not os.path.isfile(f"{dataset}/test/{ann_name}") \
+           or not os.path.isfile(f"{dataset}/test/{sensor_name}")
+
+
+def eval_model(model, loss_func, valid_dl, dev="cpu"):
+    val_loss = 0.0
+    acc = 0.0
+    model.eval()
+    with torch.no_grad():
+        # TODO calculate other metrics
+        for xb, yb in tqdm(valid_dl, desc="Validation", leave=False):
+            # for xb, yb in valid_dl:
+            xb = xb.to(dev)
+            yb = yb.to(dev)
+            y_pred = model(xb)
+            loss = loss_func(y_pred, yb)
+            val_loss += loss.item()
+            pred_class = torch.argmax(torch.log_softmax(y_pred, dim=1), dim=1)
+            # Calculate Accuracy for all classes (including stationary)
+            correct_pred = (pred_class == yb).float()
+            acc += correct_pred.sum() / len(correct_pred)
+            # Calculate acc without "Stationary"
+            # acc += 1.0 * torch.sum((pred_class == yb) * (yb > 0)) / torch.sum(yb > 0)
+        val_loss /= len(valid_dl)
+        acc /= len(valid_dl)
+
+    return val_loss, acc
+
+
+def get_mean_std_online(loader):
+    n_samples = 0
+    mean = torch.empty(6)
+    var = torch.empty(6)
+    for i_batch, batch_target in enumerate(loader):
+        batch = batch_target[0]
+        # Rearrange batch to be the shape of [B, C, W * H]
+        batch = batch.view(batch.size(0), batch.size(1), -1)
+        # Update total number of images
+        n_samples += batch.size(0)
+        # Compute mean and std here
+        mean += batch.mean(2).sum(0)
+        var += batch.var(2).sum(0)
+
+    mean /= n_samples
+    var /= n_samples
+    std = torch.sqrt(var)
+    return mean, std
+
+
+def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, earlystopping=None, save_every=None, dev="cpu"):
+    # If needed create dataset from session files in data_folder
+    if need_train_test_folder(data_folder):
+        data_helper_transportation.create_train_test_folders(data_folder, to_exclude=None)
+    error_msg = "[!] valid_size should be in the range [0, 1]."
+    assert ((valid_size >= 0) and (valid_size <= 1)), error_msg
+
+    # load dataset
+    dataset = transportation_dataset(data_path=data_folder, train=True, use_magnitude=True)
+    # Split the data into training and validation set
+    num_train = len(dataset)
+    split_valid = int(np.floor(valid_size * num_train))
+    split_train = num_train - split_valid
+    train_dataset, valid_dataset = random_split(dataset, [split_train, split_valid])
+    # Test dataset
+    test_dataset = transportation_dataset(data_path=data_folder, train=False, use_magnitude=True)
+
+    # normalize dataset (using scaler trained on training set)
+    # get mean and std of trainset (for every feature)
+    mean_train = torch.mean(train_dataset.dataset.data[train_dataset.indices], dim=0)
+    std_train = torch.std(train_dataset.dataset.data[train_dataset.indices], dim=0)
+    train_dataset.dataset.data[train_dataset.indices] = (train_dataset.dataset.data[train_dataset.indices] - mean_train) / std_train
+    valid_dataset.dataset.data[valid_dataset.indices] = (valid_dataset.dataset.data[valid_dataset.indices] - mean_train) / std_train
+    test_dataset.data = (test_dataset.data - mean_train) / std_train
+    # get the dataloaders (with the datasets)
+    train_dl = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True,
+        num_workers=0, pin_memory=True
+    )
+    valid_dl = DataLoader(
+        train_dataset, batch_size=batch_size, shuffle=True,
+        num_workers=0, pin_memory=True
+    )
+    test_dl = DataLoader(test_dataset, batch_size, shuffle=False,
+                             num_workers=0, pin_memory=True)
+
+
+
     # load the classification model
-    model = TransportationCNN(n_classes=5)
+    model = TransportationCNN(in_channels=1, n_classes=6)
     # Print the model and parameter count
-    summary(model, (1, 13, 37), device="cpu")
+    summary(model, (1, 512), device="cpu")
     model.to(dev)
     # define optimizers and loss function
     # weight_decay is L2 weight normalization (used in paper), but I dont know how much
-    opt = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0.9)
+    opt = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0.001)
     loss_func = nn.CrossEntropyLoss().to(dev)
     # fit the model
     tensorboard = False
@@ -31,7 +123,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
 
     if tensorboard:
         from torch.utils.tensorboard import SummaryWriter
-        writer = SummaryWriter(comment=f"precip_{model.__class__.__name__}")
+        writer = SummaryWriter(comment=f"transportation_{model.__class__.__name__}")
     start_time = time.time()
     best_val_loss = 1e300
     earlystopping_counter = 0
@@ -53,14 +145,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
         # scheduler.step()
 
         # Calc validation loss
-        val_loss = 0.0
-        model.eval()
-        with torch.no_grad():
-            for xb, yb in tqdm(valid_dl, desc="Validation", leave=False):
-            # for xb, yb in valid_dl:
-                loss = loss_func(model(xb.to(dev)), yb.to(dev))
-                val_loss += loss.item()
-            val_loss /= len(valid_dl)
+        val_loss, acc = eval_model(model, loss_func, valid_dl, dev=dev)
 
         # Save the model with the best validation loss
         if val_loss < best_val_loss:
@@ -84,7 +169,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
                     break
 
         print(f"Epoch: {epoch:5d}, Time: {(time.time() - start_time) / 60:.3f} min, "
-              f"Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}"
+              f"Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}, Acc: {acc:.2f}"
               f", Early stopping counter: {earlystopping_counter}/{earlystopping}" if earlystopping is not None else "")
 
         if tensorboard:
@@ -114,8 +199,8 @@ def train_model(data_folder, epochs, batch_size, learning_rate, earlystopping=No
 
 if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    train_model(data_folder="data/some_cool_data",
+    train_model(data_folder="manual_sessions/blackforest/acc_magnitude",
                 epochs=50,
-                batch_size=64,
+                batch_size=1024,
                 learning_rate=0.01,
                 earlystopping=30, dev=dev)
