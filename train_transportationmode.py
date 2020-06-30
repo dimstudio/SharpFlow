@@ -70,7 +70,7 @@ def get_mean_std_online(loader):
     return mean, std
 
 
-def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, earlystopping=None, save_every=None, dev="cpu"):
+def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, earlystopping=None, lr_scheduler=True, save_every=None, dev="cpu"):
     # If needed create dataset from session files in data_folder
     if need_train_test_folder(data_folder):
         data_helper_transportation.create_train_test_folders(data_folder, to_exclude=None)
@@ -109,13 +109,15 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
 
 
     # load the classification model
-    model = TransportationCNN(in_channels=1, n_classes=6)
+    model = TransportationCNN(in_channels=1, n_classes=6, activation_function="elu", alpha=0.1)
     # Print the model and parameter count
     summary(model, (1, 512), device="cpu")
     model.to(dev)
     # define optimizers and loss function
     # weight_decay is L2 weight normalization (used in paper), but I dont know how much
     opt = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0.001)
+    if lr_scheduler:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, 'min', factor=0.1, patience=5)
     loss_func = nn.CrossEntropyLoss().to(dev)
     # fit the model
     tensorboard = False
@@ -127,7 +129,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
     start_time = time.time()
     best_val_loss = 1e300
     earlystopping_counter = 0
-    for epoch in tqdm(range(epochs), desc="Epochs", leave=True):
+    for epoch in tqdm(range(epochs), desc="Epochs", leave=True, position=0):
         model.train()
         train_loss = 0.0
         for i, (xb, yb) in enumerate(tqdm(train_dl, desc="Batches", leave=False)):
@@ -141,11 +143,13 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
             #     break
         train_loss /= len(train_dl)
 
-        # Reduce learning rate after epoch
-        # scheduler.step()
 
         # Calc validation loss
         val_loss, acc = eval_model(model, loss_func, valid_dl, dev=dev)
+
+        # Reduce learning rate after epoch
+        if lr_scheduler:
+            scheduler.step(val_loss)
 
         # Save the model with the best validation loss
         if val_loss < best_val_loss:
