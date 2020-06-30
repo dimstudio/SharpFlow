@@ -7,11 +7,12 @@ from pandas.io.json import json_normalize
 import pickle
 from io import StringIO
 from tqdm import tqdm
-from numba import jit
-from numba.typed import Dict
-from numba.core import types
+# from numba import jit
+# from numba.typed import Dict
+# from numba.core import types
 import re
 from scipy.signal import savgol_filter
+from utils import inspect_dataset
 
 
 classes = {"Stationary": 0,
@@ -23,23 +24,25 @@ classes = {"Stationary": 0,
            }
 
 
-@jit(nopython=True)
-def get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status):
+# @jit(nopython=True)
+def get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status, smoothing=False):
     window = 512
 
-    grav = np.zeros(acc_data.shape)
-    grav[0] = acc_data[0]
-    magnitude = np.zeros(len(acc_data))
+    old_gravity = acc_data[0]
+    linear_acc = np.zeros(acc_data.shape)
     for i, val in enumerate(acc_data[1:]):
         # remove gravity: Grx_k = 0.8 * Grx_k-1 + (1-0.8)*Accx_k
+        gravity = 0.8*old_gravity + 0.2*val
         #  Lx_k = Accx_k - Grx_k
-        grav[i+1] = 0.8 * grav[i] + 0.2*val
-        lin_acc = val - grav[i+1]
-        # TODO apply smoothing
-        # lin_acc = savgol_filter(lin_acc, window_length=5, polyorder=2)
-        # Acceleration-magnitude:
-        # np.sqrt(np.sum([acc_x**2, acc_y**2, acc_z**2]))
-        magnitude[i+1] = np.sqrt(np.sum(lin_acc**2))
+        linear_acc[i+1] = val - gravity
+        old_gravity = gravity
+    # apply smoothing to each acc-sensor dimension
+    if smoothing:
+        for dim in range(linear_acc.shape[1]):
+            linear_acc[:, dim] = savgol_filter(linear_acc[:, dim], window_length=5, polyorder=2)
+    # Acceleration-magnitude:
+    # np.sqrt(np.sum([acc_x**2, acc_y**2, acc_z**2]))
+    magnitude = np.sqrt(np.sum(linear_acc**2, axis=1))
 
     current_mode = 0
     selfreport_idx = 0
@@ -81,12 +84,16 @@ def get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_
     return data, annotations
 
 
-def get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status):
+def get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status, smoothing=False):
     window = 512
     current_mode = 0
     selfreport_idx = 0
     data = []
     annotations = []
+
+    if smoothing:
+        for dim in range(sensor_values.shape[1]):
+            sensor_values[:, dim] = savgol_filter(sensor_values[:, dim], window_length=5, polyorder=2)
     # go through list
     for i in range(0, len(sensor_times)-window, 64):
         ''' 
@@ -122,7 +129,7 @@ def get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, se
     return data, annotations
 
 
-def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_exclude=None, acc_magnitude=False):
+def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_exclude=None, acc_magnitude=False, smoothing=False):
     # To exclude are sensors to exclude
     if sub_folder is None:
         sub_folder = data
@@ -172,11 +179,11 @@ def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_e
                 selfreport_status = selfreport_data["Status"].values
                 if acc_magnitude:
                     acc_data = sensor_data[["Acc_x", "Acc_y", "Acc_z"]].values
-                    tensor_data_file, annotations_file = get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status)
+                    tensor_data_file, annotations_file = get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status, smoothing=smoothing)
                 else:
                     # Get all sensor readings except for "Time"
                     sensor_values = sensor_data.loc[:, ~sensor_data.columns.isin(["Time"])].values
-                    tensor_data_file, annotations_file = get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status)
+                    tensor_data_file, annotations_file = get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status, smoothing=smoothing)
                 tensor_data_file = np.stack(tensor_data_file)
                 annotations_file = np.stack(annotations_file)
                 # Instantiate dataset or add to dataset
@@ -276,10 +283,14 @@ if __name__ == "__main__":
     # create_csv_from_MLT("../manual_sessions/blackforestMLT/ID_ddm_bighike-mountain_2020-06-02T10-40-46-094_MLT.zip")
 
     folder = "../manual_sessions/all_data"
-    sub_folder = "all_sensors"
+    use_acc_magnitude = True
+    sub_folder = "acc_magnitude" if use_acc_magnitude else "all_sensors"
     # to_exclude requires exact sensor names. e.g. ["Acc_x", "Acc_y", "Acc_z"]
     # to_exclude = ["Gyro_x", "Gyro_y", "Gyro_z"]
-    create_train_test_folders(data=folder, sub_folder=sub_folder, to_exclude=None, acc_magnitude=False)
+    start_time = time.time()
+    create_train_test_folders(data=folder, sub_folder=sub_folder, to_exclude=None, acc_magnitude=use_acc_magnitude, smoothing=True)
+    print(f"Dataset creation took: {time.time()-start_time:.2f}s")
+    inspect_dataset.show_class_distribution(os.path.join(folder, sub_folder), use_magnitude=use_acc_magnitude)
     # with open(os.path.join(folder, f"{sub_folder}/train/sensor_data.pkl"), "rb") as f:
     #     data_train = pickle.load(f)
     # print(data_train.shape)

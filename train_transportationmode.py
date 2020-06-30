@@ -199,7 +199,7 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
 
 if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    train_model(data_folder="manual_sessions/blackforest/acc_magnitude",
+    train_model(data_folder="manual_sessions/all_data/acc_magnitude",
                 epochs=50,
                 batch_size=1024,
                 learning_rate=0.01,
