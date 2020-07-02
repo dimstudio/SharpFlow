@@ -19,12 +19,12 @@ def show_class_distribution(data_folder, use_magnitude):
     print("Whole dataset size:", len(dataset)+len(test_dataset))
     existing_classes = np.unique(dataset.targets.numpy())
     # print(existing_classes)
-    print("Class \t\t\t   Train     Test    Total")
-    print("-"*55)
+    print("Class \t\t\t   Train     Test    Total   Proportion")
+    print("-"*65)
     for key, value in classes.items():
         train_amount = np.sum(dataset.targets.numpy() == value)
         test_amount = np.sum(test_dataset.targets.numpy() == value)
-        print(f"{key:15} amount: {train_amount:8} {test_amount:8} {train_amount+test_amount:8}")
+        print(f"{key:15} amount: {train_amount:8} {test_amount:8} {train_amount+test_amount:8} {(train_amount+test_amount)/(len(dataset)+len(test_dataset))*100:10.2f}%")
     print("Train:", dataset.targets.bincount())
     print("Test:", test_dataset.targets.bincount())
 

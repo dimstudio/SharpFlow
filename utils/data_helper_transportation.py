@@ -25,7 +25,7 @@ classes = {"Stationary": 0,
 
 
 # @jit(nopython=True)
-def get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status, smoothing=False):
+def get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status, smoothing=True):
     window = 512
 
     old_gravity = acc_data[0]
@@ -84,7 +84,7 @@ def get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_
     return data, annotations
 
 
-def get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status, smoothing=False):
+def get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status, smoothing=True):
     window = 512
     current_mode = 0
     selfreport_idx = 0
@@ -129,7 +129,7 @@ def get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, se
     return data, annotations
 
 
-def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_exclude=None, acc_magnitude=False, smoothing=False):
+def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_exclude=None, acc_magnitude=False, smoothing=True):
     # To exclude are sensors to exclude
     if sub_folder is None:
         sub_folder = data
