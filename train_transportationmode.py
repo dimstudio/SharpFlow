@@ -11,6 +11,7 @@ import os
 import numpy as np
 from models.Transportation_models import TransportationCNN
 from sklearn.preprocessing import StandardScaler
+from metric.confusionmatrix import ConfusionMatrix
 
 
 def need_train_test_folder(dataset):
@@ -25,7 +26,7 @@ def need_train_test_folder(dataset):
            or not os.path.isfile(f"{dataset}/test/{sensor_name}")
 
 
-def eval_model(model, loss_func, valid_dl, dev="cpu"):
+def eval_model(model, loss_func, valid_dl, conf_mat, dev="cpu"):
     val_loss = 0.0
     acc = 0.0
     model.eval()
@@ -39,6 +40,8 @@ def eval_model(model, loss_func, valid_dl, dev="cpu"):
             loss = loss_func(y_pred, yb)
             val_loss += loss.item()
             pred_class = torch.argmax(torch.log_softmax(y_pred, dim=1), dim=1)
+            # Add prediction to confusion matrix
+            conf_mat.add(pred_class, target=yb)
             # Calculate Accuracy for all classes (including stationary)
             correct_pred = (pred_class == yb).float()
             acc += correct_pred.sum() / len(correct_pred)
@@ -70,22 +73,23 @@ def get_mean_std_online(loader):
     return mean, std
 
 
-def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, earlystopping=None, lr_scheduler=True, save_every=None, dev="cpu"):
+def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid_size=0.1, to_exclude=None, use_magnitude=True,
+                earlystopping=None, lr_scheduler=True, save_every=None, dev="cpu"):
     # If needed create dataset from session files in data_folder
     if need_train_test_folder(data_folder):
-        data_helper_transportation.create_train_test_folders(data_folder, to_exclude=None)
+        data_helper_transportation.create_train_test_folders(data_folder, to_exclude=to_exclude)
     error_msg = "[!] valid_size should be in the range [0, 1]."
     assert ((valid_size >= 0) and (valid_size <= 1)), error_msg
 
     # load dataset
-    dataset = transportation_dataset(data_path=data_folder, train=True, use_magnitude=True)
+    dataset = transportation_dataset(data_path=data_folder, train=True, use_magnitude=use_magnitude)
+    test_dataset = transportation_dataset(data_path=data_folder, train=False, use_magnitude=use_magnitude)
     # Split the data into training and validation set
     num_train = len(dataset)
     split_valid = int(np.floor(valid_size * num_train))
     split_train = num_train - split_valid
     train_dataset, valid_dataset = random_split(dataset, [split_train, split_valid])
     # Test dataset
-    test_dataset = transportation_dataset(data_path=data_folder, train=False, use_magnitude=True)
 
     # normalize dataset (using scaler trained on training set)
     # get mean and std of trainset (for every feature)
@@ -109,9 +113,10 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
 
 
     # load the classification model
-    model = TransportationCNN(in_channels=1, n_classes=6, activation_function="elu", alpha=0.1)
+    input_channels = 1 if use_magnitude else dataset.data.shape[1]
+    model = TransportationCNN(in_channels=input_channels, n_classes=n_classes, activation_function="elu", alpha=0.1)
     # Print the model and parameter count
-    summary(model, (1, 512), device="cpu")
+    summary(model, (input_channels, 512), device="cpu")
     model.to(dev)
     # define optimizers and loss function
     # weight_decay is L2 weight normalization (used in paper), but I dont know how much
@@ -145,7 +150,11 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
 
 
         # Calc validation loss
-        val_loss, acc = eval_model(model, loss_func, valid_dl, dev=dev)
+        conf_mat = ConfusionMatrix(num_classes=n_classes, normalized=False)
+        val_loss, acc = eval_model(model, loss_func, valid_dl, conf_mat, dev=dev)
+        # Use conf_mat to create metrics
+        conf_mat = conf_mat.value()
+        per_class_acc = np.nan_to_num(conf_mat.diagonal()/conf_mat.sum(1))
 
         # Reduce learning rate after epoch
         if lr_scheduler:
@@ -173,13 +182,14 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
                     break
 
         print(f"Epoch: {epoch:5d}, Time: {(time.time() - start_time) / 60:.3f} min, "
-              f"Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}, Acc: {acc:.2f}"
+              f"Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}, Val_acc: {acc:.2f} Per-class-acc: {per_class_acc}"
               f", Early stopping counter: {earlystopping_counter}/{earlystopping}" if earlystopping is not None else "")
 
         if tensorboard:
             # add to tensorboard
             writer.add_scalar('Loss/train', train_loss, epoch)
             writer.add_scalar('Loss/val', val_loss, epoch)
+            # TODO add confusion-matrix to tensorboard
         if save_every is not None:
             if epoch % save_every == 0:
                 # save model
@@ -203,8 +213,12 @@ def train_model(data_folder, epochs, batch_size, learning_rate, valid_size=0.1, 
 
 if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    train_model(data_folder="manual_sessions/all_data/acc_magnitude",
+
+    train_model(data_folder="manual_sessions/all_data/all_sensors",
                 epochs=50,
                 batch_size=1024,
+                n_classes=6,
                 learning_rate=0.01,
+                to_exclude=None,
+                use_magnitude=False,
                 earlystopping=30, dev=dev)
