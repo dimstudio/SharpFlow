@@ -12,6 +12,15 @@ import numpy as np
 from models.Transportation_models import TransportationCNN
 from sklearn.preprocessing import StandardScaler
 from metric.confusionmatrix import ConfusionMatrix
+from sklearn.metrics import classification_report
+
+classes = {"Stationary": 0,
+           "Walking": 1,
+           "Running": 2,
+           "Car": 3,
+           "Train/Bus": 4,
+           "Biking": 5
+           }
 
 
 def need_train_test_folder(dataset):
@@ -28,7 +37,8 @@ def need_train_test_folder(dataset):
 
 def eval_model(model, loss_func, valid_dl, conf_mat, dev="cpu"):
     val_loss = 0.0
-    acc = 0.0
+    all_preds = []
+    all_gts = []
     model.eval()
     with torch.no_grad():
         # TODO calculate other metrics
@@ -40,17 +50,16 @@ def eval_model(model, loss_func, valid_dl, conf_mat, dev="cpu"):
             loss = loss_func(y_pred, yb)
             val_loss += loss.item()
             pred_class = torch.argmax(torch.log_softmax(y_pred, dim=1), dim=1)
+
+            all_preds.append(pred_class.cpu().numpy())
+            all_gts.append(yb.cpu().numpy())
             # Add prediction to confusion matrix
             conf_mat.add(pred_class, target=yb)
-            # Calculate Accuracy for all classes (including stationary)
-            correct_pred = (pred_class == yb).float()
-            acc += correct_pred.sum() / len(correct_pred)
-            # Calculate acc without "Stationary"
-            # acc += 1.0 * torch.sum((pred_class == yb) * (yb > 0)) / torch.sum(yb > 0)
         val_loss /= len(valid_dl)
-        acc /= len(valid_dl)
+        class_report = classification_report(np.concatenate(all_gts), np.concatenate(all_preds),
+                                             target_names=list(classes.keys()), output_dict=True, zero_division=0)
 
-    return val_loss, acc
+    return val_loss, class_report
 
 
 def get_mean_std_online(loader):
@@ -75,15 +84,18 @@ def get_mean_std_online(loader):
 
 def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid_size=0.1, to_exclude=None, use_magnitude=True,
                 earlystopping=None, lr_scheduler=True, save_every=None, dev="cpu"):
+    sub_folder = "acc_magnitude" if use_magnitude else "all_sensors"
     # If needed create dataset from session files in data_folder
-    if need_train_test_folder(data_folder):
-        data_helper_transportation.create_train_test_folders(data_folder, to_exclude=to_exclude)
+    if need_train_test_folder(os.path.join(data_folder, sub_folder)):
+        data_helper_transportation.create_train_test_folders(data_folder, sub_folder=sub_folder,
+                                                             to_exclude=to_exclude,
+                                                             acc_magnitude=use_magnitude, smoothing=True)
     error_msg = "[!] valid_size should be in the range [0, 1]."
     assert ((valid_size >= 0) and (valid_size <= 1)), error_msg
 
     # load dataset
-    dataset = transportation_dataset(data_path=data_folder, train=True, use_magnitude=use_magnitude)
-    test_dataset = transportation_dataset(data_path=data_folder, train=False, use_magnitude=use_magnitude)
+    dataset = transportation_dataset(data_path=os.path.join(data_folder, sub_folder), train=True, use_magnitude=use_magnitude)
+    test_dataset = transportation_dataset(data_path=os.path.join(data_folder, sub_folder), train=False, use_magnitude=use_magnitude)
     # Split the data into training and validation set
     num_train = len(dataset)
     split_valid = int(np.floor(valid_size * num_train))
@@ -104,7 +116,7 @@ def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid
         num_workers=0, pin_memory=True
     )
     valid_dl = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True,
+        valid_dataset, batch_size=batch_size, shuffle=True,
         num_workers=0, pin_memory=True
     )
     test_dl = DataLoader(test_dataset, batch_size, shuffle=False,
@@ -151,10 +163,10 @@ def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid
 
         # Calc validation loss
         conf_mat = ConfusionMatrix(num_classes=n_classes, normalized=False)
-        val_loss, acc = eval_model(model, loss_func, valid_dl, conf_mat, dev=dev)
+        val_loss, class_report = eval_model(model, loss_func, valid_dl, conf_mat, dev=dev)
         # Use conf_mat to create metrics
         conf_mat = conf_mat.value()
-        per_class_acc = np.nan_to_num(conf_mat.diagonal()/conf_mat.sum(1))
+        # per_class_acc = np.nan_to_num(conf_mat.diagonal()/conf_mat.sum(1))
 
         # Reduce learning rate after epoch
         if lr_scheduler:
@@ -181,8 +193,10 @@ def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid
                     print(f"Stopping early --> val_loss has not decreased over {earlystopping} epochs")
                     break
 
+        metrics_str = " ".join([f"{key} {class_report[key]['precision']:.2f}|{class_report[key]['recall']:.2f}|{class_report[key]['f1-score']:.2f}" for key in classes.keys()])
         print(f"Epoch: {epoch:5d}, Time: {(time.time() - start_time) / 60:.3f} min, "
-              f"Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}, Val_acc: {acc:.2f} Per-class-acc: {per_class_acc}"
+              f"Train_loss: {train_loss:2.10f}, Val_loss: {val_loss:2.10f}, Val_acc: {class_report['accuracy']:.2f}"
+              f", Class-metrics (Precision|Recall|F1): {metrics_str}"
               f", Early stopping counter: {earlystopping_counter}/{earlystopping}" if earlystopping is not None else "")
 
         if tensorboard:
@@ -214,11 +228,11 @@ def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid
 if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    train_model(data_folder="manual_sessions/all_data/all_sensors",
-                epochs=50,
+    train_model(data_folder="manual_sessions/all_data",
+                epochs=100,
                 batch_size=1024,
                 n_classes=6,
-                learning_rate=0.01,
+                learning_rate=0.0001,
                 to_exclude=None,
                 use_magnitude=False,
                 earlystopping=30, dev=dev)
