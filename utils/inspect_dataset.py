@@ -30,6 +30,6 @@ def show_class_distribution(data_folder, use_magnitude):
 
 
 if __name__ == "__main__":
-    data_folder = "../manual_sessions/all_data/acc_magnitude"
+    data_folder = "../manual_sessions/all_data/all_sensors"
     use_magnitude = True
     show_class_distribution(data_folder, use_magnitude)

@@ -56,6 +56,7 @@ def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_mag
                                    for key in classes.keys()])
     print(f"StratDummy: Test_acc: {class_report['accuracy']:.2f}"
           f", Class-metrics (Precision|Recall|F1): {metrics_str_stratClass}")
+
     myFrequentClassifier = DummyClassifier(strategy="most_frequent")
     myFrequentClassifier.fit(data_for_dummy, dataset.targets)
     class_report = classification_report(myFrequentClassifier.predict(test_dataset.data),

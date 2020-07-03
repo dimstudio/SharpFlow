@@ -225,8 +225,10 @@ def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid
                f"models/trained_models/{model.__class__.__name__}.pt")
 
     # Use best model for Test dataset:
+    model = load_best_val_model["model"]
+    model.load_state_dict(load_best_val_model["state_dict"])
     conf_mat = ConfusionMatrix(num_classes=n_classes, normalized=False)
-    test_loss, class_report = eval_model(load_best_val_model, loss_func, test_dl, conf_mat, dev=dev)
+    test_loss, class_report = eval_model(model, loss_func, test_dl, conf_mat, dev=dev)
     # Use conf_mat to create metrics
     conf_mat = conf_mat.value()
     metrics_str = " ".join([f"{key} {class_report[key]['precision']:.2f}|{class_report[key]['recall']:.2f}|{class_report[key]['f1-score']:.2f}"
@@ -281,21 +283,21 @@ def test_model(data_folder, model, batch_size, to_exclude=None, use_magnitude=Fa
 if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    # train_model(data_folder="manual_sessions/all_data",
-    #             epochs=100,
-    #             batch_size=1024,
-    #             n_classes=6,
-    #             learning_rate=0.0001,
-    #             to_exclude=None,
-    #             use_magnitude=False,
-    #             earlystopping=30, dev=dev)
+    train_model(data_folder="manual_sessions/all_data",
+                epochs=100,
+                batch_size=1024,
+                n_classes=6,
+                learning_rate=0.0001,
+                to_exclude=None,
+                use_magnitude=False,
+                earlystopping=30, dev=dev)
 
-    best_model = "models/trained_models/TransportationCNN.pt"
-    loaded_model = torch.load(best_model)
-    model = loaded_model["model"]
-    model.load_state_dict(loaded_model["state_dict"])
-    test_model(data_folder="manual_sessions/all_data",
-               model=model,
-               batch_size=1024,
-               use_magnitude=False,
-               dev=dev)
+    # best_model = "models/trained_models/TransportationCNN.pt"
+    # loaded_model = torch.load(best_model)
+    # model = loaded_model["model"]
+    # model.load_state_dict(loaded_model["state_dict"])
+    # test_model(data_folder="manual_sessions/all_data",
+    #            model=model,
+    #            batch_size=1024,
+    #            use_magnitude=False,
+    #            dev=dev)

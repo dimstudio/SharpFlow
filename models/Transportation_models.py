@@ -31,7 +31,7 @@ class TransportationCNN(nn.Module):
         # Network from "A Convolutional Neural Network for Transportation Mode Detection Based on Smartphone Platform"
         # https://ieeexplore.ieee.org/abstract/document/8108764
 
-        # (1 x 512) --> (32 x 256)
+        # (input_channels x 512) --> (32 x 256)
         self.conv1 = ConvMaxPoolBlock(in_channels=in_channels, out_channels=32, kernel_size=15,
                                       activation_func=activation_function, alpha=alpha)
         # next two convs have kernel size 10
