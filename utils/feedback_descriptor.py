@@ -10,7 +10,7 @@ import seaborn as sns
 sns.set()
 sns.set_style("darkgrid", {"axes.facecolor": ".97"})
 
-session_folder = "manual_sessions/CPR_feedback_learners/ordered/feedback"
+session_folder = "../manual_sessions/CPR_feedback_learners/ordered/feedback"
 ignore_files = ['Kinect','Myo']
 target_classes = ['classRelease' , 'classDepth', 'classRate', 'armsLocked', 'bodyWeight']
 #colors = ['tab:blue','tab:orange','tab:green','tab:red','tab:purple']
@@ -33,8 +33,9 @@ summaryFeedback = pd.DataFrame(index=target_classes)
 summaryFeedback['error_mean'] = np.nan
 summaryFeedback['derivative_mean'] = np.nan
 summaryFeedback['feedback_count'] = 0
-summaryFeedback['derivative_mean_-10s'] = np.nan
-summaryFeedback['derivative_mean_+10s'] = np.nan
+summaryFeedback['d1-10s'] = np.nan
+summaryFeedback['d1+10s'] = np.nan
+summaryFeedback['d1+-5s'] = np.nan
 
 
 for name,group in groups:
@@ -62,23 +63,40 @@ for name,group in groups:
             targetClass = row['Feedback.targetClass']
             series = group[targetClass][index-pd.Timedelta(seconds=10):index]
             slope = pd.Series(np.gradient(series.values), series.index, name='slope')
-            if ~np.isnan(summaryFeedback.loc[targetClass, 'derivative_mean_-10s']):
-                summaryFeedback.loc[targetClass, 'derivative_mean_-10s'] = (summaryFeedback.loc[targetClass, 'derivative_mean_-10s'] + slope.sum())/2
+            if ~np.isnan(summaryFeedback.loc[targetClass, 'd1-10s']):
+                summaryFeedback.loc[targetClass, 'd1-10s'] = (summaryFeedback.loc[targetClass, 'd1-10s'] + slope.sum())/2
             else:
-                summaryFeedback.loc[targetClass, 'derivative_mean_-10s'] = slope.sum()
+                summaryFeedback.loc[targetClass, 'd1-10s'] = slope.sum()
+
+            series = group[targetClass][index - pd.Timedelta(seconds=5):index+pd.Timedelta(seconds=5)]
+            slope = pd.Series(np.gradient(series.values), series.index, name='slope')
+            if ~np.isnan(summaryFeedback.loc[targetClass, 'd1+-5s']):
+                summaryFeedback.loc[targetClass, 'd1+-5s'] = (summaryFeedback.loc[
+                                                                                targetClass, 'd1+-5s'] + slope.sum()) / 2
+            else:
+                summaryFeedback.loc[targetClass, 'd1+-5s'] = slope.sum()
+
+
             series = group[targetClass][index:index+pd.Timedelta(seconds=10)]
             slope = pd.Series(np.gradient(series.values), series.index, name='slope')
-            if ~np.isnan(summaryFeedback.loc[targetClass, 'derivative_mean_+10s']):
-                summaryFeedback.loc[targetClass, 'derivative_mean_+10s'] = (summaryFeedback.loc[targetClass, 'derivative_mean_+10s'] + slope.sum())/2
+            if ~np.isnan(summaryFeedback.loc[targetClass, 'd1+10s']):
+                summaryFeedback.loc[targetClass, 'd1+10s'] = (summaryFeedback.loc[targetClass, 'd1+10s'] + slope.sum())/2
             else:
-                summaryFeedback.loc[targetClass, 'derivative_mean_+10s'] = slope.sum()
+                summaryFeedback.loc[targetClass, 'd1+10s'] = slope.sum()
 
             summaryFeedback.loc[targetClass, 'feedback_count'] = summaryFeedback.loc[targetClass, 'feedback_count'] + 1
 
 
-print(summaryFeedback.to_latex())
+#print(summaryFeedback.to_latex())
 
-summaryFeedback[['derivative_mean_-10s','derivative_mean_+10s']].T.plot.line()
+
+summaryFeedback[['d1-10s','d1+10s']].T.plot.line(marker='o',color=colors)
+plt.margins(x=1)
+plt.savefig(session_folder+'/kmtl-derivative.pdf')
+#summaryFeedback[['error_mean','derivative_mean']].plot(kind='bar')
+
+
+
 #for index,row in summaryFeedback.iterrows():
 #    print(row)
 
@@ -127,5 +145,4 @@ summaryFeedback[['derivative_mean_-10s','derivative_mean_+10s']].T.plot.line()
 #by_row_index = resultsDerivative.groupby(resultsDerivative.index)
 #print(by_row_index.mean().mean(axis=1).round(3))
 
-plt.show()
 
