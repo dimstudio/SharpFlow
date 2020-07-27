@@ -12,7 +12,10 @@ from sklearn.metrics import classification_report
 
 
 def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_magnitude=False, valid_size=0.1, dev="cpu"):
-    sub_folder = "acc_magnitude" if use_magnitude else "all_sensors"
+    if to_exclude is None:
+        sub_folder = "acc_magnitude" if use_magnitude else "all_sensors"
+    else:
+        sub_folder = "without_" + "_".join(to_exclude)
     # If needed create dataset from session files in data_folder
     if need_train_test_folder(os.path.join(data_folder, sub_folder)):
         data_helper_transportation.create_train_test_folders(data_folder, sub_folder=sub_folder,
@@ -92,7 +95,7 @@ def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_mag
 if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    best_model = "models/trained_models/TransportationCNN_all_sensors.pt"
+    best_model = "models/trained_models/TransportationCNN_without_Gyro_x_Gyro_y_Gyro_z.pt"
     loaded_model = torch.load(best_model)
     model = loaded_model["model"]
     model.load_state_dict(loaded_model["state_dict"])
@@ -100,4 +103,5 @@ if __name__ == "__main__":
                         model=model,
                         batch_size=1024,
                         use_magnitude=False,
+                        to_exclude=["Gyro_x", "Gyro_y", "Gyro_z"],
                         dev=dev)

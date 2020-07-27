@@ -85,7 +85,10 @@ def get_mean_std_online(loader):
 
 def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid_size=0.1, to_exclude=None, use_magnitude=True,
                 earlystopping=None, lr_scheduler=True, save_every=None, dev="cpu"):
-    sub_folder = "acc_magnitude" if use_magnitude else "all_sensors"
+    if to_exclude is None:
+        sub_folder = "acc_magnitude" if use_magnitude else "all_sensors"
+    else:
+        sub_folder = "without_"+"_".join(to_exclude)
     # If needed create dataset from session files in data_folder
     if need_train_test_folder(os.path.join(data_folder, sub_folder)):
         data_helper_transportation.create_train_test_folders(data_folder, sub_folder=sub_folder,
@@ -289,7 +292,7 @@ if __name__ == "__main__":
                 batch_size=1024,
                 n_classes=6,
                 learning_rate=0.0001,
-                to_exclude=None,
+                to_exclude=["Gyro_x", "Gyro_y", "Gyro_z"],
                 use_magnitude=False,
                 earlystopping=30, dev=dev)
 
