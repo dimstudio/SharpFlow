@@ -35,7 +35,7 @@ def need_train_test_folder(dataset):
            or not os.path.isfile(f"{dataset}/test/{sensor_name}")
 
 
-def eval_model(model, loss_func, valid_dl, conf_mat, dev="cpu"):
+def eval_model(model, loss_func, valid_dl, conf_mat=None, dev="cpu"):
     val_loss = 0.0
     all_preds = []
     all_gts = []
@@ -54,7 +54,8 @@ def eval_model(model, loss_func, valid_dl, conf_mat, dev="cpu"):
             all_preds.append(pred_class.cpu().numpy())
             all_gts.append(yb.cpu().numpy())
             # Add prediction to confusion matrix
-            conf_mat.add(pred_class, target=yb)
+            if conf_mat is not None:
+                conf_mat.add(pred_class, target=yb)
         val_loss /= len(valid_dl)
         class_report = classification_report(np.concatenate(all_gts), np.concatenate(all_preds),
                                              target_names=list(classes.keys()), output_dict=True, zero_division=0)
@@ -84,7 +85,10 @@ def get_mean_std_online(loader):
 
 def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid_size=0.1, to_exclude=None, use_magnitude=True,
                 earlystopping=None, lr_scheduler=True, save_every=None, dev="cpu"):
-    sub_folder = "acc_magnitude" if use_magnitude else "all_sensors"
+    if to_exclude is None:
+        sub_folder = "acc_magnitude" if use_magnitude else "all_sensors"
+    else:
+        sub_folder = "without_"+"_".join(to_exclude)
     # If needed create dataset from session files in data_folder
     if need_train_test_folder(os.path.join(data_folder, sub_folder)):
         data_helper_transportation.create_train_test_folders(data_folder, sub_folder=sub_folder,
@@ -142,7 +146,7 @@ def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid
 
     if tensorboard:
         from torch.utils.tensorboard import SummaryWriter
-        writer = SummaryWriter(comment=f"transportation_{model.__class__.__name__}")
+        writer = SummaryWriter(comment=f"transportation_{sub_folder}_{model.__class__.__name__}")
     start_time = time.time()
     best_val_loss = 1e300
     earlystopping_counter = 0
@@ -182,7 +186,7 @@ def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid
                 'optimizer_state_dict': opt.state_dict(),
                 'val_loss': val_loss,
                 'train_loss': train_loss
-            }, f"models/checkpoints/best_val_loss_model_{model.__class__.__name__}.pt")
+            }, f"models/checkpoints/best_val_loss_model_{model.__class__.__name__}_{sub_folder}.pt")
             best_val_loss = val_loss
             earlystopping_counter = 0
 
@@ -203,7 +207,7 @@ def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid
             # add to tensorboard
             writer.add_scalar('Loss/train', train_loss, epoch)
             writer.add_scalar('Loss/val', val_loss, epoch)
-            # TODO add confusion-matrix to tensorboard
+            # TODO add confusion-matrix to tensorboard?
         if save_every is not None:
             if epoch % save_every == 0:
                 # save model
@@ -215,14 +219,14 @@ def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid
                     # 'scheduler_state_dict': scheduler.state_dict(),
                     'val_loss': val_loss,
                     'train_loss': train_loss
-                }, f"models/checkpoints/model_{model.__class__.__name__}_epoch_{epoch}.pt")
+                }, f"models/checkpoints/model_{model.__class__.__name__}_epoch_{epoch}_{sub_folder}.pt")
 
     # Save best model
-    load_best_val_model = torch.load(f"models/checkpoints/best_val_loss_model_{model.__class__.__name__}.pt")
+    load_best_val_model = torch.load(f"models/checkpoints/best_val_loss_model_{model.__class__.__name__}_{sub_folder}.pt")
     os.makedirs("models/trained_models", exist_ok=True)
     torch.save({'model': load_best_val_model['model'],
                 'state_dict': load_best_val_model['state_dict']},
-               f"models/trained_models/{model.__class__.__name__}.pt")
+               f"models/trained_models/{model.__class__.__name__}_{sub_folder}.pt")
 
     # Use best model for Test dataset:
     model = load_best_val_model["model"]
@@ -257,8 +261,8 @@ def test_model(data_folder, model, batch_size, to_exclude=None, use_magnitude=Fa
     split_valid = int(np.floor(valid_size * num_train))
     split_train = num_train - split_valid
     train_dataset, valid_dataset = random_split(dataset, [split_train, split_valid])
-    # Test dataset
 
+    # Test dataset
     # normalize dataset (using scaler trained on training set)
     # get mean and std of trainset (for every feature)
     mean_train = torch.mean(train_dataset.dataset.data[train_dataset.indices], dim=0)
@@ -284,11 +288,11 @@ if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
     train_model(data_folder="manual_sessions/all_data",
-                epochs=100,
+                epochs=200,
                 batch_size=1024,
                 n_classes=6,
                 learning_rate=0.0001,
-                to_exclude=None,
+                to_exclude=["Gyro_x", "Gyro_y", "Gyro_z"],
                 use_magnitude=False,
                 earlystopping=30, dev=dev)
 

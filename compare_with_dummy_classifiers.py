@@ -12,7 +12,10 @@ from sklearn.metrics import classification_report
 
 
 def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_magnitude=False, valid_size=0.1, dev="cpu"):
-    sub_folder = "acc_magnitude" if use_magnitude else "all_sensors"
+    if to_exclude is None:
+        sub_folder = "acc_magnitude" if use_magnitude else "all_sensors"
+    else:
+        sub_folder = "without_" + "_".join(to_exclude)
     # If needed create dataset from session files in data_folder
     if need_train_test_folder(os.path.join(data_folder, sub_folder)):
         data_helper_transportation.create_train_test_folders(data_folder, sub_folder=sub_folder,
@@ -37,15 +40,12 @@ def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_mag
     # get mean and std of trainset (for every feature)
     mean_train = torch.mean(train_dataset.dataset.data[train_dataset.indices], dim=0)
     std_train = torch.std(train_dataset.dataset.data[train_dataset.indices], dim=0)
-    # train_dataset.dataset.data[train_dataset.indices] = (train_dataset.dataset.data[
-    #                                                          train_dataset.indices] - mean_train) / std_train
-    # valid_dataset.dataset.data[valid_dataset.indices] = (valid_dataset.dataset.data[
-    #                                                          valid_dataset.indices] - mean_train) / std_train
+    # Dummy classifiers don't need train+val set
     data_for_dummy = (dataset.data-mean_train)/std_train
     test_dataset.data = (test_dataset.data - mean_train) / std_train
     test_dl = DataLoader(test_dataset, batch_size, shuffle=False,
                          num_workers=0, pin_memory=True)
-    ###### Dummy Classifier #######
+    ###### Dummy Classifier 1 #######
     myStratifiedClassifier = DummyClassifier(strategy="stratified")
     myStratifiedClassifier.fit(data_for_dummy, dataset.targets)
     class_report = classification_report(myStratifiedClassifier.predict(test_dataset.data),
@@ -56,7 +56,11 @@ def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_mag
                                    for key in classes.keys()])
     print(f"StratDummy: Test_acc: {class_report['accuracy']:.2f}"
           f", Class-metrics (Precision|Recall|F1): {metrics_str_stratClass}")
-
+    latex_str = " & ".join([
+        f"{class_report[key]['precision']:.2f} & {class_report[key]['recall']:.2f} & {class_report[key]['f1-score']:.2f}"
+        for key in classes.keys()])
+    print(f"StratDummy latex: {latex_str}")
+    ###### Dummy Classifier 2 ######
     myFrequentClassifier = DummyClassifier(strategy="most_frequent")
     myFrequentClassifier.fit(data_for_dummy, dataset.targets)
     class_report = classification_report(myFrequentClassifier.predict(test_dataset.data),
@@ -67,6 +71,10 @@ def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_mag
         for key in classes.keys()])
     print(f"FrequencyDummy: Test_acc: {class_report['accuracy']:.2f}"
           f", Class-metrics (Precision|Recall|F1): {metrics_str_freqClass}")
+    latex_str = " & ".join([
+                               f"{class_report[key]['precision']:.2f} & {class_report[key]['recall']:.2f} & {class_report[key]['f1-score']:.2f}"
+                               for key in classes.keys()])
+    print(f"FrequencyDummy latex: {latex_str}")
 
     ###### CNN ######
     loss_func = nn.CrossEntropyLoss().to(dev)
@@ -79,12 +87,15 @@ def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_mag
                                for key in classes.keys()])
     print(f"CNN: Test_acc: {class_report['accuracy']:.2f}"
           f", Class-metrics (Precision|Recall|F1): {metrics_str_CNN}")
+    latex_str = " & ".join([f"{class_report[key]['precision']:.2f} & {class_report[key]['recall']:.2f} & {class_report[key]['f1-score']:.2f}"
+                           for key in classes.keys()])
+    print(f"CNN latex: {latex_str}")
 
 
 if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    best_model = "models/trained_models/TransportationCNN.pt"
+    best_model = "models/trained_models/TransportationCNN_without_Gyro_x_Gyro_y_Gyro_z.pt"
     loaded_model = torch.load(best_model)
     model = loaded_model["model"]
     model.load_state_dict(loaded_model["state_dict"])
@@ -92,4 +103,5 @@ if __name__ == "__main__":
                         model=model,
                         batch_size=1024,
                         use_magnitude=False,
+                        to_exclude=["Gyro_x", "Gyro_y", "Gyro_z"],
                         dev=dev)

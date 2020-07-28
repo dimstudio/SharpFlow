@@ -7,9 +7,6 @@ from pandas.io.json import json_normalize
 import pickle
 from io import StringIO
 from tqdm import tqdm
-# from numba import jit
-# from numba.typed import Dict
-# from numba.core import types
 import re
 from scipy.signal import savgol_filter
 from utils import inspect_dataset
@@ -24,8 +21,7 @@ classes = {"Stationary": 0,
            }
 
 
-# @jit(nopython=True)
-def get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status, smoothing=True):
+def get_samples_from_csv_acc_magnitude(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status, smoothing=True):
     window = 512
 
     old_gravity = acc_data[0]
@@ -84,7 +80,7 @@ def get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_
     return data, annotations
 
 
-def get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status, smoothing=True):
+def get_samples_from_csv(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status, smoothing=True):
     window = 512
     current_mode = 0
     selfreport_idx = 0
@@ -168,7 +164,7 @@ def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_e
                 # This is for fixing possible faulty first entries
                 if (selfreport_data.iloc[0] == ["Time", "Transportation_Mode", "Status"]).any():
                     selfreport_data = selfreport_data.drop(0)
-                # convert pandas DF to numpy and apply numba
+                # convert pandas DF to numpy
                 sensor_times = pd.to_datetime(sensor_data["Time"], format="%Y-%m-%dT%H:%M:%S.%f").values.astype(
                     np.int64) // 10 ** 9
                 selfreport_times = pd.to_datetime(selfreport_data["Time"],
@@ -179,11 +175,11 @@ def create_train_test_folders(data, sub_folder=None, train_test_ratio=0.85, to_e
                 selfreport_status = selfreport_data["Status"].values
                 if acc_magnitude:
                     acc_data = sensor_data[["Acc_x", "Acc_y", "Acc_z"]].values
-                    tensor_data_file, annotations_file = get_samples_from_csv_acc_magnitude_numba(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status, smoothing=smoothing)
+                    tensor_data_file, annotations_file = get_samples_from_csv_acc_magnitude(sensor_times, acc_data, selfreport_times, selfreport_mode, selfreport_status, smoothing=smoothing)
                 else:
                     # Get all sensor readings except for "Time"
                     sensor_values = sensor_data.loc[:, ~sensor_data.columns.isin(["Time"])].values
-                    tensor_data_file, annotations_file = get_samples_from_csv_numba(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status, smoothing=smoothing)
+                    tensor_data_file, annotations_file = get_samples_from_csv(sensor_times, sensor_values, selfreport_times, selfreport_mode, selfreport_status, smoothing=smoothing)
                 tensor_data_file = np.stack(tensor_data_file)
                 annotations_file = np.stack(annotations_file)
                 # Instantiate dataset or add to dataset
@@ -283,7 +279,7 @@ if __name__ == "__main__":
     # create_csv_from_MLT("../manual_sessions/blackforestMLT/ID_ddm_bighike-mountain_2020-06-02T10-40-46-094_MLT.zip")
 
     folder = "../manual_sessions/all_data"
-    use_acc_magnitude = True
+    use_acc_magnitude = False
     sub_folder = "acc_magnitude" if use_acc_magnitude else "all_sensors"
     # to_exclude requires exact sensor names. e.g. ["Acc_x", "Acc_y", "Acc_z"]
     # to_exclude = ["Gyro_x", "Gyro_y", "Gyro_z"]
