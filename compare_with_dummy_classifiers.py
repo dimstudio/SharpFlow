@@ -11,7 +11,7 @@ from sklearn.dummy import DummyClassifier
 from sklearn.metrics import classification_report
 
 
-def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_magnitude=False, valid_size=0.1, dev="cpu"):
+def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_magnitude=False, valid_size=0.1, use_lstm=False, dev="cpu"):
     if to_exclude is None:
         sub_folder = "acc_magnitude" if use_magnitude else "all_sensors"
     else:
@@ -77,6 +77,15 @@ def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_mag
     print(f"FrequencyDummy latex: {latex_str}")
 
     ###### CNN ######
+    if use_lstm:
+        test_dataset = transportation_dataset(data_path=os.path.join(data_folder, sub_folder), train=False,
+                                              use_magnitude=use_magnitude, use_lstm=use_lstm)
+        test_dataset.data = (test_dataset.data - mean_train.T) / std_train.T
+        test_dl = DataLoader(test_dataset, batch_size, shuffle=False,
+                             num_workers=0, pin_memory=True)
+        model_name = "LSTM"
+    else:
+        model_name = "CNN"
     loss_func = nn.CrossEntropyLoss().to(dev)
     # Use best NN-model for Test dataset:
     conf_mat = ConfusionMatrix(num_classes=6, normalized=False)
@@ -85,17 +94,18 @@ def compare_classifiers(data_folder, model, batch_size, to_exclude=None, use_mag
     conf_mat = conf_mat.value()
     metrics_str_CNN = " ".join([f"{key} {class_report[key]['precision']:.2f}|{class_report[key]['recall']:.2f}|{class_report[key]['f1-score']:.2f}"
                                for key in classes.keys()])
-    print(f"CNN: Test_acc: {class_report['accuracy']:.2f}"
+    print(f"{model_name}: Test_acc: {class_report['accuracy']:.2f}"
           f", Class-metrics (Precision|Recall|F1): {metrics_str_CNN}")
     latex_str = " & ".join([f"{class_report[key]['precision']:.2f} & {class_report[key]['recall']:.2f} & {class_report[key]['f1-score']:.2f}"
                            for key in classes.keys()])
-    print(f"CNN latex: {latex_str}")
+    print(f"{model_name} latex: {latex_str}")
 
 
 if __name__ == "__main__":
     dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    best_model = "models/trained_models/TransportationCNN_without_Gyro_x_Gyro_y_Gyro_z.pt"
+    use_lstm = True
+    best_model = "models/trained_models/TransportationLSTM_bidirectional_128Neurons_without_Gyro_x_Gyro_y_Gyro_z.pt"
     loaded_model = torch.load(best_model)
     model = loaded_model["model"]
     model.load_state_dict(loaded_model["state_dict"])
@@ -104,4 +114,5 @@ if __name__ == "__main__":
                         batch_size=1024,
                         use_magnitude=False,
                         to_exclude=["Gyro_x", "Gyro_y", "Gyro_z"],
+                        use_lstm=use_lstm,
                         dev=dev)

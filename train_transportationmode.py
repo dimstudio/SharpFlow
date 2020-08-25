@@ -9,7 +9,7 @@ from tqdm import tqdm
 import time
 import os
 import numpy as np
-from models.Transportation_models import TransportationCNN
+from models.Transportation_models import TransportationCNN, TransportationLSTM
 from sklearn.preprocessing import StandardScaler
 from metric.confusionmatrix import ConfusionMatrix
 from sklearn.metrics import classification_report
@@ -83,8 +83,12 @@ def get_mean_std_online(loader):
     return mean, std
 
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid_size=0.1, to_exclude=None, use_magnitude=True,
-                earlystopping=None, lr_scheduler=True, save_every=None, dev="cpu"):
+                earlystopping=None, lr_scheduler=True, save_every=None, use_lstm=False, dev="cpu"):
     if to_exclude is None:
         sub_folder = "acc_magnitude" if use_magnitude else "all_sensors"
     else:
@@ -98,8 +102,10 @@ def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid
     assert ((valid_size >= 0) and (valid_size <= 1)), error_msg
 
     # load dataset
-    dataset = transportation_dataset(data_path=os.path.join(data_folder, sub_folder), train=True, use_magnitude=use_magnitude)
-    test_dataset = transportation_dataset(data_path=os.path.join(data_folder, sub_folder), train=False, use_magnitude=use_magnitude)
+    dataset = transportation_dataset(data_path=os.path.join(data_folder, sub_folder),
+                                     train=True, use_magnitude=use_magnitude, use_lstm=use_lstm)
+    test_dataset = transportation_dataset(data_path=os.path.join(data_folder, sub_folder),
+                                          train=False, use_magnitude=use_magnitude, use_lstm=use_lstm)
     # Split the data into training and validation set
     num_train = len(dataset)
     split_valid = int(np.floor(valid_size * num_train))
@@ -129,10 +135,14 @@ def train_model(data_folder, epochs, n_classes, batch_size, learning_rate, valid
 
 
     # load the classification model
-    input_channels = 1 if use_magnitude else dataset.data.shape[1]
-    model = TransportationCNN(in_channels=input_channels, n_classes=n_classes, activation_function="elu", alpha=0.1)
+    input_channels = 1 if use_magnitude else dataset.data.shape[1+int(use_lstm)]
+    if use_lstm:
+        model = TransportationLSTM(input_channels, 128, output_size=n_classes, bidirectional=True)
+    else:
+        model = TransportationCNN(in_channels=input_channels, n_classes=n_classes, activation_function="elu", alpha=0.1)
     # Print the model and parameter count
-    summary(model, (input_channels, 512), device="cpu")
+    print("Trainable parameters: ", count_parameters(model))
+    # summary(model, (input_channels, 512), device="cpu")
     model.to(dev)
     # define optimizers and loss function
     # weight_decay is L2 weight normalization (used in paper), but I dont know how much
@@ -291,7 +301,8 @@ if __name__ == "__main__":
                 epochs=200,
                 batch_size=1024,
                 n_classes=6,
-                learning_rate=0.0001,
+                learning_rate=0.001,  # CNN used 0.00001
+                use_lstm=True,  # controls training CNN or LSTM
                 to_exclude=["Gyro_x", "Gyro_y", "Gyro_z"],
                 use_magnitude=False,
                 earlystopping=30, dev=dev)
