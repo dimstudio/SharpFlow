@@ -6,7 +6,7 @@ import torch
 
 
 class transportation_dataset(Dataset):
-    def __init__(self, data_path, train=True, use_magnitude=False):
+    def __init__(self, data_path, train=True, use_magnitude=False, use_lstm=False):
         # super(self)
         # Do something with the data_path
         # e.g. load it in memory
@@ -21,7 +21,8 @@ class transportation_dataset(Dataset):
             self.targets = pickle.load(f)
 
         self.use_magnitude = use_magnitude
-        if not use_magnitude:
+        if not use_magnitude and not use_lstm:
+            # samples x seq_len x features --> samples x features x seq_len
             self.data = np.transpose(self.data, (0, 2, 1))
 
         self.data = torch.tensor(self.data, dtype=torch.float)
