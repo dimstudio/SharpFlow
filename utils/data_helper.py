@@ -152,12 +152,20 @@ def tensor_transform(df_all, df_ann, res_rate, to_exclude=None):
     ]
     # What is interval_max for?
     interval_max = 0
+    #print(masked_df)
+    new_masked_df = []
     for dt in masked_df:
-        delta = np.timedelta64(dt.index[-1] - dt.index[0], 'ms') / np.timedelta64(1, 'ms')
-        if delta > interval_max:
-            interval_max = delta
+        if dt.index.size>0:
+            delta = np.timedelta64(dt.index[-1] - dt.index[0], 'ms') / np.timedelta64(1, 'ms')
+            if delta > interval_max:
+                interval_max = delta
+            new_masked_df.append(dt)
+        else:
+            print('Detected dt.index is of size 0, excluded from the list.')
     # This results in different length of entries
-    df_resampled = [dt.resample(str(res_rate) + 'ms').first() if not dt.empty else None for dt in masked_df]
+    df_resampled = [dt.resample(str(res_rate) + 'ms').first() if not dt.empty else None for dt in new_masked_df]
+
+    #median_signal_length = int(np.median([len(l) for l in df_resampled]))
     median_signal_length = int(np.median([len(l) for l in df_resampled]))
     print(f"Median signal length: {median_signal_length}")
     df_tensor = create_batches(df_resampled, median_signal_length)
@@ -178,7 +186,7 @@ def create_batches(df, bin_size):
         batch = np.dstack((batch, np.array(interval)))
     batch = batch[:, :, 1:].swapaxes(2, 0).swapaxes(1, 2)  # (197, 11, 59)
     print(("The shape of the batch is " + str(batch.shape)))
-    #print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
+    print(('Batch is containing nulls? ' + str(np.isnan(batch).any())))
 
     return batch  # tensor
 
